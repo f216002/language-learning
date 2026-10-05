@@ -32,6 +32,7 @@ textarea{resize:vertical}
 button{border:1px solid var(--line);background:#f8fafc;border-radius:10px;padding:9px 14px;font-size:.95rem;cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
 button:disabled{opacity:.5;cursor:default}
+a.btn-link{display:inline-block;text-decoration:none;padding:10px 18px}
 .check{display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer}
 .check input{width:auto}
 .empty{color:var(--muted);text-align:center;padding:28px 12px}
