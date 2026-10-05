@@ -10,19 +10,18 @@
 <meta name="apple-mobile-web-app-title" content="語言學習">
 <meta name="theme-color" content="#1e3a8a">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="styles.css?v=20261005-01">
+<link rel="stylesheet" href="styles.css?v=20261005-02">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
-<script src="ll-auth.js?v=20261005-01"></script>
+<script src="ll-auth.js?v=20261005-02"></script>
 <script src="ll-lang.js?v=20261005-01"></script>
 </head>
 <body>
 <header class="topbar">
   <h1>🌍 語言學習 <span class="en-sub">Language Learning</span></h1>
   <div class="authbox">
-    <button id="llGoogleSignIn" type="button">Google 登入</button>
     <div id="llTeacherAccount" hidden>
       <img id="llAccountPhoto" alt="" width="28" height="28">
       <span id="llAccountName"></span>
@@ -35,9 +34,10 @@
 <button id="llAdminButton" type="button" hidden>後台</button>
 
 <div id="signedOutView" class="card center" hidden>
-  <h2>👋 歡迎</h2>
-  <p>用 Google 帳號登入，開始你的專屬語言學習空間。<br>
-  <span class="en-sub">Sign in with Google to start your personal language studio.</span></p>
+  <h2>👋 請先登入</h2>
+  <p>這裡是 V4 老師的專屬外語學習空間，請先到 V4 網站用 Google 登入後再回來。<br>
+  <span class="en-sub">Please sign in with Google on the V4 site first.</span></p>
+  <p><a class="primary btn-link" href="https://f216002.github.io/chinese-sentence-bank-v4/">前往 V4 登入 →</a></p>
 </div>
 
 <div id="appView" hidden>
