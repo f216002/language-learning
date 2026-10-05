@@ -651,13 +651,10 @@
     });
   }
 
-  /* ②：把貼上的解釋填入整理提示辭的佔位符，一鍵複製。 */
-  function combineOrganizeAndCopy() {
-    var exp = $('explanationInput').value.trim();
-    if (!exp) { alert('請先貼上 AI 的解釋內容。'); $('explanationInput').focus(); return; }
-    var t = currentOrganizePrompt().replace('請填入筆記內容', exp);
-    copyTextRaw(t).then(function (ok) {
-      $('step2Msg').textContent = ok ? '已加入整理提示詞並複製，回去剛才的 AI 頁面貼上送出吧。' : '複製失敗，請重試。';
+  /* ②：複製整理提示詞（追問版）——解釋已在 AI 對話上下文中，不需貼回。 */
+  function copyOrganizeFollowup() {
+    copyTextRaw(currentOrganizePrompt()).then(function (ok) {
+      $('step2Msg').textContent = ok ? '已複製，回去剛才的大語言模型聊天室貼上送出吧。' : '複製失敗，請重試。';
     });
   }
 
@@ -922,7 +919,7 @@
     $('copyLearnBtn').addEventListener('click', copyLearn);
     $('openLearnChatGPT').addEventListener('click', function () { copyAndOpenLearn('https://chatgpt.com/'); });
     $('openLearnGemini').addEventListener('click', function () { copyAndOpenLearn('https://gemini.google.com/app'); });
-    $('combineOrganizeBtn').addEventListener('click', combineOrganizeAndCopy);
+    $('copyOrganizeBtn').addEventListener('click', copyOrganizeFollowup);
     $('parseBtn').addEventListener('click', parsePreview);
     $('saveParsedBtn').addEventListener('click', saveParsed);
     $('addInboxBtn').addEventListener('click', addInbox);
