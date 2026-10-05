@@ -446,13 +446,27 @@
 
   function playUrl(url) {
     return new Promise(function (resolve) {
-      var a = new Audio(url);
+      /* iOS Safari 用 data: URL 播音不可靠（play() 會靜默被拒絕，導致無聲跳過），
+         先轉成 Blob URL 再播才穩定。轉換是純本機運算，不耗 Azure 額度。 */
+      var objectUrl = null, src = url;
+      var dm = /^data:([^;,]+);base64,(.*)$/.exec(url || '');
+      if (dm) {
+        try {
+          var bin = atob(dm[2]);
+          var bytes = new Uint8Array(bin.length);
+          for (var bi = 0; bi < bin.length; bi++) bytes[bi] = bin.charCodeAt(bi);
+          objectUrl = URL.createObjectURL(new Blob([bytes], { type: dm[1] || 'audio/mpeg' }));
+          src = objectUrl;
+        } catch (_) { objectUrl = null; src = url; }
+      }
+      var a = new Audio(src);
       state.currentAudio = a;
       var done = false, timer = null;
       function finish() {
         if (done) return; done = true;
         if (timer) clearTimeout(timer);
         if (state.currentAudio === a) state.currentAudio = null;
+        if (objectUrl) { try { URL.revokeObjectURL(objectUrl); } catch (_) {} }
         resolve();
       }
       /* 讓 stopPlayback 可以立刻叫醒這次等待，不用等看門狗。 */
@@ -471,7 +485,13 @@
         };
       } catch (_) {}
       a.onended = a.onerror = finish;
-      try { a.play().catch(finish); } catch (_) { finish(); }
+      try {
+        a.play().catch(function (err) {
+          /* play() 被拒絕才會到這裡：記下原因，不要無聲跳過。 */
+          try { console.warn('audio play() rejected', err); } catch (_) {}
+          finish();
+        });
+      } catch (_) { finish(); }
     });
   }
 
