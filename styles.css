@@ -72,8 +72,9 @@ dialog label input{margin-top:4px}
 .topic-item:hover{background:#eff6ff}
 .topic-check{display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0}
 .topic-check input{width:18px;height:18px;accent-color:var(--accent);flex-shrink:0}
-.topic-rename{border:0;background:none;font-size:.95rem;cursor:pointer;padding:4px 8px;opacity:.55;flex-shrink:0}
-.topic-rename:hover{opacity:1}
+.topic-ops{display:flex;flex-shrink:0}
+.topic-rename,.topic-del{border:0;background:none;font-size:.95rem;cursor:pointer;padding:4px 6px;opacity:.55}
+.topic-rename:hover,.topic-del:hover{opacity:1}
 .topic-all{background:#f8fafc}
 .topic-divider{height:1px;background:var(--line);margin:4px 0}
 /* ---- 全選列 ---- */
