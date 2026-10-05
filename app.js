@@ -17,7 +17,7 @@
     user: null, uid: null, lang: 'hi',
     notes: [], inbox: [], topics: [],
     playQueue: [], playing: false, stopFlag: false, paused: false,
-    currentAudio: null, currentNote: null, playToken: 0,
+    currentAudio: null, currentNote: null, playToken: 0, cancelWait: null,
     audioCache: new Map(), synthFn: null, audioSource: '', lastAudioFrom: ''
   };
 
@@ -422,6 +422,8 @@
         try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); } catch (_) {}
         resolve();
       }
+      /* 讓 stopPlayback 可以立刻叫醒這次等待，不用等看門狗。 */
+      state.cancelWait = finish;
       try {
         /* 只有真的在講話或排隊時才 cancel，避免「cancel 後緊接 speak」觸發 Chrome 的卡住 bug。 */
         if (speechSynthesis.speaking || speechSynthesis.pending) {
@@ -450,6 +452,8 @@
         if (state.currentAudio === a) state.currentAudio = null;
         resolve();
       }
+      /* 讓 stopPlayback 可以立刻叫醒這次等待，不用等看門狗。 */
+      state.cancelWait = function () { try { a.pause(); } catch (_) {} finish(); };
       /* 看門狗：先給 45 秒保底；讀到 duration 後改按實際長度＋緩衝，保證一定結束。 */
       function arm(ms) {
         if (timer) clearTimeout(timer);
@@ -597,11 +601,16 @@
     if (!state.synthFn) {
       state.synthFn = window.firebase.app().functions('us-east1').httpsCallable('synthesizeV4Source', { timeout: 60000 });
     }
-    /* 保底 70 秒：雲端函式無回應時也不凍結播放流程。 */
-    var res = await Promise.race([
-      state.synthFn({ locale: locale, text: text }),
-      sleep(70000).then(function () { throw new Error('Azure 請求逾時（70秒無回應）'); })
-    ]);
+    /* 保底 70 秒＋可被 stopPlayback 立刻叫醒：雲端函式無回應時也不凍結播放流程。 */
+    var res = await new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () { reject(new Error('Azure 請求逾時（70秒無回應）')); }, 70000);
+      state.cancelWait = function () { clearTimeout(timer); reject(new Error('已停止')); };
+      state.synthFn({ locale: locale, text: text }).then(
+        function (r) { clearTimeout(timer); resolve(r); },
+        function (e) { clearTimeout(timer); reject(e); }
+      );
+    });
+    state.cancelWait = null;
     var data = (res && res.data) || {};
     if (!data.audioBase64) throw new Error('empty audio');
     var url = 'data:' + (data.contentType || 'audio/mpeg') + ';base64,' + data.audioBase64;
@@ -617,10 +626,14 @@
     if (L.cloudVoice && !tooLong) {
       try {
         var url = await azureForeign(text, locale);
+        /* 查詢期間被按了停止：直接返回，不要播。 */
+        if (state.stopFlag) return;
         setAudioSource(state.lastAudioFrom || 'azure');
         await playUrl(url);
         return;
       } catch (err) {
+        /* 使用者按了停止：不要改播瀏覽器語音，直接把停止信號往上拋，讓循環立刻結束。 */
+        if (state.stopFlag) throw err;
         var reason = (err && err.message) || String(err);
         console.warn('Azure failed, browser fallback', err);
         /* 失敗原因顯示出來，不再靜默降級。 */
@@ -653,18 +666,20 @@
         if (!state.stopFlag && token === state.playToken) await sleep(700);
       }
     } finally {
-      if (token === state.playToken) {
-        state.playing = false;
-        if (btn) btn.classList.remove('playing');
-        $('playState').textContent = '';
-        endPlaybackUI();
-      }
+      state.playing = false;
+      if (btn) btn.classList.remove('playing');
+      $('playState').textContent = '';
+      endPlaybackUI();
     }
   }
 
   function stopPlayback() {
     state.playToken++;
     state.stopFlag = true;
+    /* 立刻叫醒目前卡住的等待（播音／Azure 請求），不等看門狗超時。 */
+    var cancel = state.cancelWait;
+    state.cancelWait = null;
+    try { if (cancel) cancel(); } catch (_) {}
     state.paused = false; setPausedUI();
     try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
     try { speechSynthesis.cancel(); } catch (_) {}
@@ -689,12 +704,10 @@
         }
       } while (loop && !state.stopFlag && token === state.playToken);
     } finally {
-      if (token === state.playToken) {
-        state.playing = false;
-        $('playSelectedBtn').textContent = '▶ 播放勾選';
-        $('playState').textContent = '';
-        endPlaybackUI();
-      }
+      state.playing = false;
+      $('playSelectedBtn').textContent = '▶ 播放勾選';
+      $('playState').textContent = '';
+      endPlaybackUI();
     }
   }
 
