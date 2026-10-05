@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>語言學習</title>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="語言學習">
+<meta name="theme-color" content="#1e3a8a">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="styles.css?v=20261005-01">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
+<script src="ll-auth.js?v=20261005-01"></script>
+<script src="ll-lang.js?v=20261005-01"></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>🌍 語言學習 <span class="en-sub">Language Learning</span></h1>
+  <div class="authbox">
+    <button id="llGoogleSignIn" type="button">Google 登入</button>
+    <div id="llTeacherAccount" hidden>
+      <img id="llAccountPhoto" alt="" width="28" height="28">
+      <span id="llAccountName"></span>
+      <button id="llGoogleSignOut" type="button" hidden>登出</button>
+    </div>
+    <span id="llAccountEmail" class="muted"></span>
+  </div>
+</header>
+<p id="llAuthMessage" class="authmsg"></p>
+<button id="llAdminButton" type="button" hidden>後台</button>
+
+<div id="signedOutView" class="card center" hidden>
+  <h2>👋 歡迎</h2>
+  <p>用 Google 帳號登入，開始你的專屬語言學習空間。<br>
+  <span class="en-sub">Sign in with Google to start your personal language studio.</span></p>
+</div>
+
+<div id="appView" hidden>
+  <nav class="tabs">
+    <button id="nav-library" type="button" class="active">📚 句子庫</button>
+    <button id="nav-learn" type="button">✨ 學新句</button>
+    <button id="nav-inbox" type="button">📝 待整理</button>
+    <button id="nav-settings" type="button">⚙️ 設定</button>
+  </nav>
+
+  <!-- 句子庫 -->
+  <section id="tab-library">
+    <div class="card">
+      <div class="row between">
+        <h2 id="libraryTitle">句子庫</h2>
+        <button id="addNoteBtn" type="button" class="primary">＋ 新增句子</button>
+      </div>
+      <div class="row wrap">
+        <select id="topicFilter" aria-label="主題篩選"><option value="">全部主題</option></select>
+        <input id="searchInput" type="search" placeholder="搜尋中文、外文、拼音、主題…">
+      </div>
+      <div class="row wrap">
+        <button id="playSelectedBtn" type="button" class="primary">▶ 播放勾選</button>
+        <label class="check"><input id="loopCheck" type="checkbox"> 🔁 循環</label>
+        <span id="playState" class="muted"></span>
+      </div>
+      <p id="noteCount" class="muted"></p>
+    </div>
+    <div id="noteList"></div>
+  </section>
+
+  <!-- 學新句 -->
+  <section id="tab-learn" hidden>
+    <div class="card">
+      <h2>✨ 學新句 <span class="en-sub">AI workflow</span></h2>
+      <p class="hint">① 寫下你想表達的話 → ② 複製學習提示辭去 Gemini／ChatGPT 學 → ③ 複製整理提示辭請 AI 整理 → ④ 貼回來自動入庫。全程不用離開這個頁面找檔案。</p>
+      <label>你想表達的話（中文）：
+        <textarea id="ideaInput" rows="3" placeholder="例如：我明天早上要去市場買菜，怎麼用印地文說？"></textarea>
+      </label>
+      <div class="row wrap">
+        <button id="copyLearnBtn" type="button" class="primary">① 複製學習提示辭</button>
+        <button id="copyOrganizeBtn" type="button">② 複製整理提示辭</button>
+      </div>
+      <p id="learnMsg" class="muted" aria-live="polite"></p>
+    </div>
+    <div class="card">
+      <h3>③ 貼上 AI 整理好的句子</h3>
+      <div class="row wrap">
+        <input id="importTopicId" placeholder="主題編號（選填）" size="12">
+        <input id="importTopicName" placeholder="主題名稱（選填）" size="16">
+      </div>
+      <textarea id="organizedInput" rows="8" placeholder="把 AI 照格式輸出的「第 1 句…」全文貼在這裡"></textarea>
+      <div class="row wrap">
+        <button id="parseBtn" type="button" class="primary">解析預覽</button>
+        <button id="saveParsedBtn" type="button" class="primary" hidden>✓ 全部存入句子庫</button>
+      </div>
+      <div id="parsePreview"></div>
+    </div>
+  </section>
+
+  <!-- 待整理 -->
+  <section id="tab-inbox" hidden>
+    <div class="card">
+      <h2>📝 待整理 <span class="muted" id="inboxCount"></span></h2>
+      <p class="hint">想到要表達的話，先記一句，有空再去「學新句」整理。</p>
+      <div class="row">
+        <input id="inboxInput" type="text" placeholder="隨手記一句…" style="flex:1">
+        <button id="addInboxBtn" type="button" class="primary">記下來</button>
+      </div>
+    </div>
+    <div id="inboxList"></div>
+  </section>
+
+  <!-- 設定 -->
+  <section id="tab-settings" hidden>
+    <div class="card">
+      <h2>⚙️ 設定</h2>
+      <p>目前學習語言：<strong id="currentLangName"></strong></p>
+      <label>切換學習語言：
+        <select id="langSelect"></select>
+      </label>
+      <div class="row wrap">
+        <button id="testVoiceBtn" type="button">🔊 試播語音</button>
+      </div>
+      <p id="settingsMsg" class="muted" aria-live="polite"></p>
+    </div>
+    <div class="card">
+      <h3>資料</h3>
+      <div class="row wrap">
+        <button id="importLegacyBtn" type="button">📥 匯入舊站 480 句（含音檔）</button>
+        <button id="exportBtn" type="button">📤 匯出備份 JSON</button>
+      </div>
+      <p class="hint">匯入舊站資料為一次性動作，只建議在印地文模式下執行一次；音檔沿用舊站連結播放。</p>
+    </div>
+  </section>
+</div>
+
+<dialog id="editDialog">
+  <h3 id="editorTitle">新增句子</h3>
+  <label>中文：<input id="editZh" type="text"></label>
+  <label>外文：<input id="editForeign" type="text"></label>
+  <label>羅馬拼音：<input id="editRoman" type="text"></label>
+  <div class="row">
+    <label>主題編號：<input id="editTopicId" type="text" size="8"></label>
+    <label>主題名稱：<input id="editTopicName" type="text" size="14"></label>
+  </div>
+  <div class="row wrap">
+    <button id="saveEditBtn" type="button" class="primary">儲存</button>
+    <button type="button" onclick="document.getElementById('editDialog').close()">取消</button>
+  </div>
+</dialog>
+
+<script src="app.js?v=20261005-01"></script>
+</body>
+</html>
