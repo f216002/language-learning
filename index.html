@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="語言學習">
 <meta name="theme-color" content="#1e3a8a">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="styles.css?v=20261005-03">
+<link rel="stylesheet" href="styles.css?v=20261005-04">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -57,15 +57,28 @@
         <button id="addNoteBtn" type="button" class="primary">＋ 新增句子</button>
       </div>
       <div class="row wrap">
-        <select id="topicFilter" aria-label="主題篩選"><option value="">全部主題</option></select>
+        <div class="topic-dropdown" id="topicDropdown">
+          <button type="button" id="topicDropdownBtn" aria-label="主題篩選"><span id="topicBtnText">全部主題</span><span aria-hidden="true"> ▾</span></button>
+          <div id="topicDropdownMenu" class="topic-menu" hidden>
+            <label class="topic-item topic-all"><input type="checkbox" id="topicSelectAll"> <strong>全選全部主題</strong></label>
+            <div class="topic-divider"></div>
+            <div id="topicCheckboxList"></div>
+          </div>
+        </div>
         <input id="searchInput" type="search" placeholder="搜尋中文、外文、拼音、主題…">
       </div>
       <div class="row wrap">
         <button id="playSelectedBtn" type="button" class="primary">▶ 播放勾選</button>
+        <button id="pauseBtn" type="button" disabled>⏸ 暫停</button>
         <label class="check"><input id="loopCheck" type="checkbox"> 🔁 循環</label>
         <span id="playState" class="muted"></span>
       </div>
+      <div id="nowPlaying" class="now-playing" hidden>
+        <div class="np-text"><div id="npForeign" class="np-foreign"></div><div id="npRoman" class="np-roman"></div><div id="npZh" class="np-zh"></div></div>
+        <button id="explainBtn" type="button" title="AI 解釋這句">✨ 解釋</button>
+      </div>
       <p id="noteCount" class="muted"></p>
+      <label class="select-all-row"><input type="checkbox" id="selectAllBox"> <strong>全選目前顯示句子</strong> <span id="selectCount" class="muted"></span></label>
     </div>
     <div id="noteList"></div>
   </section>
@@ -129,11 +142,24 @@
       <h3>資料</h3>
       <div class="row wrap">
         <button id="importLegacyBtn" type="button">📥 匯入舊站 480 句（含音檔）</button>
+        <button id="dedupeBtn" type="button">🧹 刪除重複句子</button>
         <button id="exportBtn" type="button">📤 匯出備份 JSON</button>
       </div>
       <p class="hint">匯入舊站資料為一次性動作，只建議在印地文模式下執行一次；音檔沿用舊站連結播放。</p>
     </div>
   </section>
+</div>
+
+<div id="geminiPanel" role="dialog" aria-label="AI 解釋">
+  <div class="gp-card">
+    <button type="button" class="gp-back" id="geminiBackBtn">← 返回學習</button>
+    <div class="gp-title">✨ Gemini 印地文解析</div>
+    <div id="geminiOriginalHindi"></div>
+    <div id="geminiOriginalRoman"></div>
+    <div id="geminiOriginalZh"></div>
+    <div id="geminiStatus">⏳ Gemini 正在分析這句印地文……</div>
+    <div id="geminiResult"></div>
+  </div>
 </div>
 
 <dialog id="editDialog">
@@ -152,6 +178,6 @@
   </div>
 </dialog>
 
-<script src="app.js?v=20261005-03"></script>
+<script src="app.js?v=20261005-04"></script>
 </body>
 </html>
