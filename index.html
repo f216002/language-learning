@@ -16,7 +16,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <script src="ll-auth.js?v=20261005-02"></script>
-<script src="ll-lang.js?v=20261005-03"></script>
+<script src="ll-lang.js?v=20261005-04"></script>
 </head>
 <body>
 <header class="topbar">
@@ -87,7 +87,7 @@
   <section id="tab-learn" hidden>
     <div class="card">
       <h2>✨ 學新句 <span class="en-sub">AI workflow</span></h2>
-      <p class="hint">① 輸入中文 → 按鍵（提示詞自動加上）→ 到 ChatGPT／Gemini 貼上學習 → ② 貼回 AI 的解釋 → 一鍵加上整理提示詞並複製 → 回 AI 頁面貼上整理 → ③ 貼回整理好的句子入庫。</p>
+      <p class="hint">① 輸入中文 → 按鍵（提示詞自動加上）→ 到 ChatGPT／Gemini 貼上學習 → ② 複製整理提示詞 → 回同一 AI 聊天室貼上送出 → ③ 貼回整理好的句子入庫。</p>
       <h3>① 你想表達的話（中文）</h3>
       <label>
         <textarea id="ideaInput" rows="3" placeholder="例如：我明天早上要去市場買菜，怎麼用印地文說？"></textarea>
@@ -101,10 +101,10 @@
       <p id="step1Msg" class="muted" aria-live="polite"></p>
     </div>
     <div class="card">
-      <h3>② 貼上 AI 的解釋內容 <span class="en-sub">Paste explanation</span></h3>
-      <textarea id="explanationInput" rows="8" placeholder="把 ChatGPT／Gemini 解釋的內容貼在這裡"></textarea>
+      <h3>② 複製整理解釋內容提示詞 <span class="en-sub">Copy organize prompt</span></h3>
+      <p class="hint">解釋還留在剛才的大語言模型對話中，不用貼回來。按下面複製提示詞，回去同一個聊天室貼上送出，就會得到整理好的句子。</p>
       <div class="row wrap">
-        <button id="combineOrganizeBtn" type="button" class="primary">加入提示詞並複製 <span class="en-sub">Add prompt &amp; copy</span></button>
+        <button id="copyOrganizeBtn" type="button" class="primary">複製整理解釋內容提示詞 <span class="en-sub">Copy organize prompt</span></button>
       </div>
       <p id="step2Msg" class="muted" aria-live="polite"></p>
     </div>
@@ -203,6 +203,6 @@
   </div>
 </dialog>
 
-<script src="app.js?v=20261005-07"></script>
+<script src="app.js?v=20261005-08"></script>
 </body>
 </html>
