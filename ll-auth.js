@@ -1,6 +1,6 @@
-/* ---- V4 Google 登入（移植自 V3，獨立運作） ----
-   V4 部署於 GitHub Pages，一律使用彈出視窗登入（signInWithPopup）。
-   Firebase app 由此檔初始化（window.LL_FIREBASE_CONFIG），app.js 沿用。
+/* ---- 語言學習登入狀態（移植自 V4 v4-auth.js，獨立運作） ----
+   本站不設登入按鈕：與 V4 同源（f216002.github.io），共用 Firebase 登入狀態。
+   老師先在 V4 用 Google 登入，本站自動辨識；未登入時顯示前往 V4 的引導。
    登入狀態發布到 window.LL_AUTH，並觸發 ll-auth-changed 事件。 */
 (function () {
   'use strict';
@@ -33,10 +33,6 @@
   }
   window.LL_AUTH_INSTANCE = auth;
 
-  var provider = new window.firebase.auth.GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-
-  var signInButton = $('llGoogleSignIn');
   var signOutButton = $('llGoogleSignOut');
   var accountPanel = $('llTeacherAccount');
   var accountPhoto = $('llAccountPhoto');
@@ -69,7 +65,6 @@
   }
 
   function showSignedOut() {
-    if (signInButton) { signInButton.hidden = false; signInButton.disabled = false; }
     if (signOutButton) signOutButton.hidden = true;
     if (accountPanel) accountPanel.hidden = true;
     if (adminButton) adminButton.hidden = true;
@@ -80,7 +75,6 @@
   }
 
   function showSignedIn(user) {
-    if (signInButton) signInButton.hidden = true;
     if (signOutButton) { signOutButton.hidden = false; signOutButton.disabled = false; }
     if (accountPanel) accountPanel.hidden = false;
     if (adminButton) adminButton.hidden = !isAdminEmail(user.email);
@@ -91,31 +85,6 @@
       else { accountPhoto.removeAttribute('src'); }
     }
     setAuthMessage('');
-  }
-
-  if (signInButton) {
-    signInButton.addEventListener('click', function () {
-      signInButton.disabled = true;
-      setAuthMessage('正在開啟 Google 登入…');
-      auth.signInWithPopup(provider).catch(function (error) {
-        var code = (error && error.code) || '';
-        if (code === 'auth/popup-blocked') {
-          setAuthMessage('彈出視窗被阻擋，請允許本網站的彈出視窗後再試一次。', true);
-        } else if (code === 'auth/popup-closed-by-user') {
-          setAuthMessage('已關閉 Google 登入視窗。');
-        } else if (code === 'auth/cancelled-popup-request') {
-          setAuthMessage('登入被中斷，請再按一次登入。');
-        } else if (code === 'auth/unauthorized-domain') {
-          setAuthMessage('此網域尚未在 Firebase 授權，請聯繫管理員。', true);
-        } else if (code === 'auth/operation-not-supported-in-this-environment') {
-          setAuthMessage('請用 Safari 或 Chrome 直接開啟本網站再登入。', true);
-        } else {
-          setAuthMessage('Google 登入失敗：' + ((error && error.message) || code), true);
-        }
-      }).finally(function () {
-        if (!auth.currentUser) signInButton.disabled = false;
-      });
-    });
   }
 
   if (signOutButton) {
