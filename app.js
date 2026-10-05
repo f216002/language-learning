@@ -557,26 +557,51 @@
   function currentLearnPrompt() { return llBuildLearnPrompt(state.lang); }
   function currentOrganizePrompt() { return llBuildOrganizePrompt(state.lang); }
 
-  function copyText(t, okMsg) {
-    function done() { $('learnMsg').textContent = okMsg || '已複製，去 Gemini／ChatGPT 貼上吧。'; }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(t).then(done, function () { fallback(); });
-    } else fallback();
-    function fallback() {
-      var ta = document.createElement('textarea');
-      ta.value = t; document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); done(); } catch (_) { $('learnMsg').textContent = '複製失敗，請手動複製。'; }
-      document.body.removeChild(ta);
-    }
-  }
-
-  function copyLearnPrompt() {
+  /* V4 式提示辭區：顯示全文＋三鍵（複製／複製並開啟 ChatGPT／複製並開啟 Gemini）。 */
+  function learnPromptText() {
     var idea = $('ideaInput').value.trim();
-    var t = currentLearnPrompt() + (idea ? '\n\n我想表達的內容：\n' + idea : '');
-    copyText(t, '學習提示辭已複製（' + langProfile().nameZh + '）。');
+    return currentLearnPrompt() + (idea ? '\n\n我想表達的內容：\n' + idea : '');
+  }
+  function organizePromptText() { return currentOrganizePrompt(); }
+
+  function refreshPromptBoxes() {
+    var lp = $('learnPromptBox'), op = $('organizePromptBox');
+    if (lp) lp.value = learnPromptText();
+    if (op) op.value = organizePromptText();
   }
 
-  function copyOrganizePrompt() { copyText(currentOrganizePrompt(), '整理提示辭已複製。'); }
+  function copyTextFallback(t) {
+    var ta = document.createElement('textarea');
+    ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+  function copyTextRaw(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(t).then(function () { return true; }, function () { return copyTextFallback(t); });
+    }
+    return Promise.resolve(copyTextFallback(t));
+  }
+
+  function copyPrompt(which) {
+    var t = which === 'learn' ? learnPromptText() : organizePromptText();
+    var msgId = which === 'learn' ? 'learnPromptMsg' : 'organizePromptMsg';
+    copyTextRaw(t).then(function (ok) {
+      $(msgId).textContent = ok ? '已複製，去貼上吧。' : '複製失敗，請手動從上方文字框複製。';
+    });
+  }
+
+  function copyAndOpenPrompt(which, url) {
+    var t = which === 'learn' ? learnPromptText() : organizePromptText();
+    var isMobile = window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    copyTextRaw(t).then(function () {
+      if (isMobile) window.location.assign(url);
+      else window.open(url, '_blank', 'noopener,noreferrer');
+    });
+  }
 
   function parsePreview() {
     var text = $('organizedInput').value;
@@ -606,7 +631,7 @@
       div.appendChild(d);
     });
     $('saveParsedBtn').hidden = false;
-    $('learnMsg').textContent = '解析出 ' + items.length + ' 句，檢查無誤後存入句子庫。';
+    $('parseMsg').textContent = '解析出 ' + items.length + ' 句，檢查無誤後存入句子庫。';
   }
 
   async function saveParsed() {
@@ -625,7 +650,7 @@
       $('organizedInput').value = '';
       $('parsePreview').innerHTML = '';
       $('saveParsedBtn').hidden = true;
-      $('learnMsg').textContent = '已存入 ' + items.length + ' 句！';
+      $('parseMsg').textContent = '已存入 ' + items.length + ' 句！';
       switchTab('library');
       await loadNotes();
     } catch (err) { alert('存入失敗：' + (err.message || err)); }
@@ -680,7 +705,7 @@
         await langCol('inbox').doc(id).delete();
         await loadInbox();
         switchTab('learn');
-        $('learnMsg').textContent = '已載入待整理內容，開始第一步吧。';
+        $('ideaMsg').textContent = '已載入待整理內容，開始第一步吧。';
       }
     }
   });
@@ -701,6 +726,7 @@
       sel.appendChild(o);
     });
     $('libraryTitle').textContent = L.nameZh + '句子庫';
+    refreshPromptBoxes();
   }
 
   async function setLang(code) {
@@ -835,8 +861,13 @@
     $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
     $('addNoteBtn').addEventListener('click', function () { openEditor(null); });
     $('saveEditBtn').addEventListener('click', saveEditor);
-    $('copyLearnBtn').addEventListener('click', copyLearnPrompt);
-    $('copyOrganizeBtn').addEventListener('click', copyOrganizePrompt);
+    $('copyLearnBtn').addEventListener('click', function () { copyPrompt('learn'); });
+    $('openLearnChatGPT').addEventListener('click', function () { copyAndOpenPrompt('learn', 'https://chatgpt.com/'); });
+    $('openLearnGemini').addEventListener('click', function () { copyAndOpenPrompt('learn', 'https://gemini.google.com/app'); });
+    $('copyOrganizeBtn').addEventListener('click', function () { copyPrompt('organize'); });
+    $('openOrganizeChatGPT').addEventListener('click', function () { copyAndOpenPrompt('organize', 'https://chatgpt.com/'); });
+    $('openOrganizeGemini').addEventListener('click', function () { copyAndOpenPrompt('organize', 'https://gemini.google.com/app'); });
+    $('ideaInput').addEventListener('input', refreshPromptBoxes);
     $('parseBtn').addEventListener('click', parsePreview);
     $('saveParsedBtn').addEventListener('click', saveParsed);
     $('addInboxBtn').addEventListener('click', addInbox);
