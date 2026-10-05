@@ -94,3 +94,6 @@ dialog label input{margin-top:4px}
 #geminiOriginalZh{color:#334155;margin-bottom:20px}
 #geminiStatus{padding:16px;background:#eff6ff;border-radius:12px;color:#1e40af;font-weight:700;margin-bottom:16px}
 #geminiResult{white-space:pre-wrap;font-size:1rem;line-height:1.8}
+/* ---- V4 式提示辭三鍵 ---- */
+button.dark{background:#111827;border-color:#111827;color:#fff;font-weight:700}
+#learnPromptBox,#organizePromptBox{width:100%;font-size:.88rem;line-height:1.6;background:#f8fafc;resize:vertical}
