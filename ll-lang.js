@@ -126,7 +126,7 @@ var LL_LANGS = {
       { zh:'開車的時候。', foreign:'هنگام رانندگی.', roman:'Hengaam-e raanandegi.' } ] }
 };
 
-/* 第一部分：學習提示辭（R1–R3）。 */
+/* 第一部分：學習提示辭（R1–R3＋單字片語例句要求）。 */
 function llBuildLearnPrompt(code) {
   var L = LL_LANGS[code] || LL_LANGS.hi;
   var verb = L.verbNote
@@ -135,9 +135,12 @@ function llBuildLearnPrompt(code) {
   var pron = L.requiresRomanization
     ? '那麼句子中，只要是有出現' + L.scriptName + '，請' + L.scriptName + '的後面一定要有括號,裡面附上羅馬拼音，幫助我理解。'
     : '那麼句子中，遇到發音特殊或容易讀錯的' + L.nameZh + '單詞，請在該單詞後面用括號附上發音提示，幫助我正確朗讀。';
+  var vocabExamples = L.requiresRomanization
+    ? '另外，對於解釋過程中出現的特別單字、片語、慣用語，除了講解意思和用法之外，每一個都要再提供 1～2 個實用的例句（' + L.scriptName + '原文，括號附羅馬拼音，再附中文翻譯），讓我學會在日常生活中實際運用。'
+    : '另外，對於解釋過程中出現的特別單字、片語、慣用語，除了講解意思和用法之外，每一個都要再提供 1～2 個實用的例句（' + L.nameZh + '原文，再附中文翻譯；發音特殊的單詞請附發音提示），讓我學會在日常生活中實際運用。';
   return '作為一位優秀的' + L.nameZh + '老師,請你解釋以下的' + L.nameZh +
     ',我是一位' + L.nameZh + '的初學習者,解釋的方法請用俄羅斯洋娃娃的剝洋蔥法，從大架構到小架構,逐層逐層分析它的語法架構還有每個單詞的使用。' +
-    verb + '。還有，' + L.grammarFocus + '也都特別詳細說明。我是一個' + L.nameZh + '的初學者，你是一個優秀的' + L.nameZh + '老師。' +
+    verb + '。' + vocabExamples + '還有，' + L.grammarFocus + '也都特別詳細說明。我是一個' + L.nameZh + '的初學者，你是一個優秀的' + L.nameZh + '老師。' +
     pron + '整個解釋請用中文來解釋，為了理解清楚,有時可以使用英文文法來輔助說明';
 }
 
