@@ -651,7 +651,16 @@
   }
 
   async function playSentence(n, btn) {
-    if (state.playing) { stopPlayback(); return; }
+    if (state.playing) {
+      /* 播到一半點了別句的播放鍵：直接切換過去（先停舊的，等它完全退出再播新的），
+         不讓使用者以為當掉。點同一句則是切換為停止。 */
+      var switching = !state.currentNote || state.currentNote._id !== n._id;
+      stopPlayback();
+      if (!switching) return;
+      var waited = 0;
+      while (state.playing && waited < 2000) { await sleep(50); waited += 50; }
+      if (state.playing) return;  /* 舊循環 2 秒還沒退出，保守起見不啟動新的 */
+    }
     state.playing = true; state.stopFlag = false;
     var token = ++state.playToken;
     beginPlaybackUI();
