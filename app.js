@@ -308,6 +308,8 @@
         '</div>' +
         '<div class="note-actions">' +
           '<button type="button" data-act="play" data-id="' + n._id + '" title="播放">▶</button>' +
+          /* ✨ 解釋僅印地文：播放條已移除，改由卡片觸發（沿用舊站 Gemini 服務）。 */
+          (state.lang === 'hi' ? '<button type="button" data-act="explain" data-id="' + n._id + '" title="AI 解釋">✨</button>' : '') +
           '<button type="button" data-act="edit" data-id="' + n._id + '" title="編輯">✏️</button>' +
           '<button type="button" data-act="del" data-id="' + n._id + '" title="刪除">🗑</button>' +
         '</div>';
@@ -341,6 +343,7 @@
       if (!n) return;
       var act = btn.getAttribute('data-act');
       if (act === 'play') playSentence(n, btn);
+      else if (act === 'explain') explainNote(n, btn);
       else if (act === 'edit') openEditor(n);
       else if (act === 'del' && confirm('確定刪除這句？')) deleteNote(n);
       return;
@@ -509,8 +512,6 @@
     $('npForeign').textContent = n.foreign || '';
     $('npRoman').textContent = n.roman || '';
     $('npZh').textContent = n.zh || '';
-    /* ✨ 解釋目前只支援印地文（沿用舊站 Gemini 服務）。 */
-    $('explainBtn').style.display = (state.lang === 'hi') ? '' : 'none';
     markPlayingCard();
   }
   function markPlayingCard() {
@@ -731,12 +732,11 @@
     }
   }
 
-  /* ---------- ✨ 解釋（移植舊站 Gemini 面板，僅印地文） ---------- */
+  /* ---------- ✨ 解釋（移植舊站 Gemini 面板，僅印地文；觸發鈕在各卡片上，播放條不再佔位） ---------- */
   var GEMINI_WEB_APP = 'https://script.google.com/macros/s/AKfycbwJSRywJnRF-H7B8imfFNzGAL-Af32AEOuMZUMgAUKc7zg1Yox4NedVWz1IeljRKc7jiQ/exec';
 
-  function explainCurrentSentence() {
-    var n = state.currentNote;
-    if (!n || !n.foreign) { alert('請先播放一句話。'); return; }
+  function explainNote(n, btn) {
+    if (!n || !n.foreign) { alert('找不到這句的內容。'); return; }
     $('geminiOriginalHindi').textContent = n.foreign || '';
     $('geminiOriginalRoman').textContent = n.roman || '';
     $('geminiOriginalZh').textContent = n.zh || '';
@@ -745,8 +745,7 @@
     statusBox.style.display = 'block';
     statusBox.textContent = '⏳ 正在連線 Gemini AI，請稍候……';
     resultBox.textContent = '';
-    var btn = $('explainBtn');
-    btn.textContent = '⏳ 解釋中…'; btn.disabled = true;
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
     var callbackName = 'geminiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
     var script = document.createElement('script');
     var completed = false, timeoutId = null;
@@ -754,7 +753,7 @@
       if (script.parentNode) script.parentNode.removeChild(script);
       try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
       if (timeoutId) clearTimeout(timeoutId);
-      btn.textContent = '✨ 解釋'; btn.disabled = false;
+      if (btn) { btn.textContent = '✨'; btn.disabled = false; }
     }
     window[callbackName] = function (result) {
       if (completed) return; completed = true;
@@ -951,17 +950,23 @@
     var L = langProfile();
     $('currentLangName').textContent = L.nameZh + ' (' + L.name + ' · ' + L.locale + ')';
     document.title = '語言學習 · ' + L.nameZh;
-    var sel = $('langSelect');
-    sel.innerHTML = '';
-    Object.keys(LL_LANGS).forEach(function (code) {
-      var p = LL_LANGS[code];
-      var o = document.createElement('option');
-      o.value = code;
-      o.textContent = p.nameZh + ' · ' + p.name;
-      if (code === state.lang) o.selected = true;
-      sel.appendChild(o);
+    ['langSelect', 'langSelectTop'].forEach(function (id) {
+      var sel = $(id);
+      if (!sel) return;
+      sel.innerHTML = '';
+      Object.keys(LL_LANGS).forEach(function (code) {
+        var p = LL_LANGS[code];
+        var o = document.createElement('option');
+        o.value = code;
+        o.textContent = p.nameZh + ' · ' + p.name;
+        if (code === state.lang) o.selected = true;
+        sel.appendChild(o);
+      });
     });
     $('libraryTitle').textContent = L.nameZh + '句子庫';
+    /* 各欄位跟著語言變：學新句輸入框的舉例提示 */
+    var ideaInput = $('ideaInput');
+    if (ideaInput) ideaInput.placeholder = '例如：我明天早上要去市場買菜，怎麼用' + L.nameZh + '說？';
   }
 
   async function setLang(code) {
@@ -1093,7 +1098,6 @@
     $('playSelectedBtn').addEventListener('click', playSelected);
     $('pauseBtn').addEventListener('click', togglePause);
     $('selectAllBox').addEventListener('change', function (e) { toggleSelectAllShown(e.target.checked); });
-    $('explainBtn').addEventListener('click', explainCurrentSentence);
     $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
     $('addNoteBtn').addEventListener('click', function () { openEditor(null); });
     $('saveEditBtn').addEventListener('click', saveEditor);
@@ -1106,6 +1110,8 @@
     $('addInboxBtn').addEventListener('click', addInbox);
     $('editForeign').addEventListener('input', updateForeignCount);
     $('langSelect').addEventListener('change', function (e) { setLang(e.target.value); });
+    var langSelectTop = $('langSelectTop');
+    if (langSelectTop) langSelectTop.addEventListener('change', function (e) { setLang(e.target.value); });
     $('testVoiceBtn').addEventListener('click', testVoice);
     $('importLegacyBtn').addEventListener('click', importLegacy);
     $('dedupeBtn').addEventListener('click', dedupeNotes);
