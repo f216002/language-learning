@@ -164,10 +164,39 @@
       rn.type = 'button'; rn.className = 'topic-rename'; rn.title = '重新命名主題';
       rn.textContent = '✏️';
       rn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openTopicRename(key); });
-      row.appendChild(label); row.appendChild(rn);
+      var del = document.createElement('button');
+      del.type = 'button'; del.className = 'topic-del'; del.title = '刪除主題及全部句子';
+      del.textContent = '🗑️';
+      del.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); deleteTopic(key); });
+      var ops = document.createElement('span');
+      ops.className = 'topic-ops';
+      ops.appendChild(rn); ops.appendChild(del);
+      row.appendChild(label); row.appendChild(ops);
       list.appendChild(row);
     });
     syncTopicUI();
+  }
+
+  /* 主題刪除：該主題下全部句子一起刪除（先顯示句數確認，無法復原）。 */
+  async function deleteTopic(key) {
+    var t = null;
+    state.topics.forEach(function (x) { if (topicKey(x) === key) t = x; });
+    if (!t) return;
+    var label = (t.id ? '#' + t.id + ' ' : '') + (t.name || '(未分類)');
+    if (!confirm('確定刪除主題「' + label + '」嗎？\n共 ' + t.count + ' 個句子會一起被刪除，此動作無法復原。')) return;
+    try {
+      var ids = [];
+      state.notes.forEach(function (n) {
+        if ((n.topicId || '') + '‖' + (n.topicName || '') === key) ids.push(n._id);
+      });
+      for (var i = 0; i < ids.length; i += 400) {
+        var batch = db().batch();
+        ids.slice(i, i + 400).forEach(function (id) { batch.delete(langCol('notes').doc(id)); });
+        await batch.commit();
+      }
+      $('topicDropdownMenu').hidden = true;
+      await loadNotes();
+    } catch (err) { alert('刪除失敗：' + (err.message || err)); }
   }
 
   /* 主題批量更名：把該主題下全部句子的編號／名稱一起更新（含事後補主題）。 */
