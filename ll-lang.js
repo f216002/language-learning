@@ -144,20 +144,25 @@ function llBuildLearnPrompt(code) {
     pron + '整個解釋請用中文來解釋，為了理解清楚,有時可以使用英文文法來輔助說明';
 }
 
-/* 第二部分：整理成句提示辭（R4–R5；格式即解析器契約）。 */
+/* 第二部分：整理成句提示辭（追問版；格式即解析器契約）。
+   2026-10-05 Cheng 定案：解釋已留在大語言模型的對話上下文中，不需貼回；
+   本提示辭只要求 AI「整理以上給出的解釋」，使用者複製後回同一聊天室貼上送出即可。 */
 function llBuildOrganizePrompt(code) {
   var L = LL_LANGS[code] || LL_LANGS.hi;
+  var langYu = L.nameZh.replace(/文$/, '') + '語'; /* 印地文→印地語（「印地文語」不通順） */
+  var sameStem = L.scriptName.replace(/文$/, '') === langYu.replace(/語$/, '');
+  var foreignMain = sameStem ? '一句' + L.scriptName : '一句' + L.scriptName + '的' + langYu;
   var foreignClause = L.requiresRomanization
-    ? ',一句' + L.scriptName + '的' + L.nameZh + '語，然後一句羅馬拼音的' + L.nameZh + '語，還有一句'
-    : '，一句' + L.nameZh + '文';
+    ? '，' + foreignMain + '，然後一句羅馬拼音的' + langYu + '，還有一句'
+    : '，一句' + L.nameZh;
   var body = L.examples.map(function (ex, i) {
     var s = '第 ' + (i + 1) + ' 句\n\n中文：' + ex.zh + '\n' + L.scriptName + '：' + ex.foreign + '\n';
     if (L.requiresRomanization) s += '羅馬拼音：\n' + ex.roman + '\n' + ex.roman + '\n' + ex.roman + '\n';
     return s;
   }).join('');
-  return '請整理以下的筆記，把它變成就是挑選出其中的' + L.nameZh + '的句子，把它變成這個中文翻譯' + foreignClause +
+  return '請整理以上您給出的解釋，挑選出其中的' + L.nameZh + '的句子，把它變成這個中文翻譯' + foreignClause +
     '。至於解釋的部分就不用了，因為我要製作聲頻檔練習聽力還有說口說，所以我只需要完整的句子。那至於筆記裡面其他的解釋部分就把它刪除。整理好後請依照以下格式"' + body +
-    '"重新輸出，原始筆記內容為:"請填入筆記內容"';
+    '"重新輸出';
 }
 
 /* 解析第二部分格式的 AI 回答 → [{zh, foreign, roman}]。
