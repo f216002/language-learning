@@ -16,7 +16,8 @@
   var state = {
     user: null, uid: null, lang: 'hi',
     notes: [], inbox: [], topics: [],
-    playQueue: [], playing: false, stopFlag: false,
+    playQueue: [], playing: false, stopFlag: false, paused: false,
+    currentAudio: null, currentNote: null,
     audioCache: new Map(), synthFn: null
   };
 
@@ -79,17 +80,42 @@
   }
 
   /* ---------- 句子庫 ---------- */
+  /* 舊站匯入句子的原始編號（#id）：新匯入的存 legacyId；已匯入的可從音檔名還原。 */
+  function noteLegacyId(n) {
+    if (n.legacyId != null && n.legacyId !== '') return String(n.legacyId);
+    var m = /(\d+)\.mp3$/.exec(n.audioUrl || '');
+    return m ? String(Number(m[1])) : '';
+  }
+
   async function loadNotes() {
     try {
-      var snap = await langCol('notes').orderBy('createdAt', 'desc').get();
+      var snap = await langCol('notes').get();
       state.notes = [];
       snap.forEach(function (d) {
         var n = d.data(); n._id = d.id; state.notes.push(n);
+      });
+      /* 排序：有主題編號的在前（編號小→大），同主題內按舊站 id 排序；自建句子按建立時間倒序。 */
+      state.notes.sort(function (a, b) {
+        var ta = parseInt(a.topicId, 10), tb = parseInt(b.topicId, 10);
+        var ga = isNaN(ta) ? 1 : 0, gb = isNaN(tb) ? 1 : 0;
+        if (ga !== gb) return ga - gb;
+        if (!ga && ta !== tb) return ta - tb;
+        var la = parseInt(noteLegacyId(a), 10), lb = parseInt(noteLegacyId(b), 10);
+        var ia = isNaN(la) ? 1e9 : la, ib = isNaN(lb) ? 1e9 : lb;
+        if (ia !== ib) return ia - ib;
+        var at = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+        var bt = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+        return bt - at;
       });
     } catch (err) { console.error('load notes failed', err); state.notes = []; }
     buildTopicFilter();
     renderNotes();
   }
+
+  /* 主題多選（對齊舊站）：下拉式勾選清單，含「全選全部主題」，再按一次全取消。 */
+  var selectedTopicKeys = [];
+  var prevTopicKeys = [];
+  function topicKey(t) { return (t.id || '') + '‖' + (t.name || ''); }
 
   function buildTopicFilter() {
     var map = new Map();
@@ -98,29 +124,74 @@
       if (!map.has(key)) map.set(key, { id: n.topicId || '', name: n.topicName || '', count: 0 });
       map.get(key).count++;
     });
-    state.topics = Array.from(map.values());
-    var sel = $('topicFilter');
-    var cur = sel.value;
-    sel.innerHTML = '<option value="">全部主題</option>';
-    state.topics.forEach(function (t) {
-      var o = document.createElement('option');
-      o.value = t.id + '‖' + t.name;
-      o.textContent = (t.id ? '#' + t.id + ' ' : '') + (t.name || '(未分類)') + ' (' + t.count + ')';
-      sel.appendChild(o);
+    /* 主題按編號由小到大排序（修復匯入後順序亂掉的問題）。 */
+    state.topics = Array.from(map.values()).sort(function (a, b) {
+      var x = parseInt(a.id, 10), y = parseInt(b.id, 10);
+      var nx = isNaN(x), ny = isNaN(y);
+      if (nx !== ny) return nx ? 1 : -1;
+      if (!nx && x !== y) return x - y;
+      return String(a.name).localeCompare(String(b.name), 'zh-Hant');
     });
-    if (cur) sel.value = cur;
+    var newKeys = state.topics.map(topicKey);
+    if (!prevTopicKeys.length || newKeys.length !== prevTopicKeys.length) {
+      /* 首次載入、切換語言或主題增減：預設全選（開啟即顯示全部）。 */
+      selectedTopicKeys = newKeys;
+    } else {
+      /* 主題不變（刪除／編輯句子）：保留使用者之前的勾選。 */
+      selectedTopicKeys = selectedTopicKeys.filter(function (k) { return newKeys.indexOf(k) !== -1; });
+    }
+    prevTopicKeys = newKeys;
+    renderTopicDropdown();
+  }
+
+  function renderTopicDropdown() {
+    var list = $('topicCheckboxList');
+    list.innerHTML = '';
+    state.topics.forEach(function (t) {
+      var key = topicKey(t);
+      var label = document.createElement('label');
+      label.className = 'topic-item';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = key;
+      cb.checked = selectedTopicKeys.indexOf(key) !== -1;
+      cb.addEventListener('change', onTopicCheckChange);
+      var sp = document.createElement('span');
+      sp.textContent = (t.id ? '#' + t.id + ' ' : '') + (t.name || '(未分類)') + ' (' + t.count + ')';
+      label.appendChild(cb); label.appendChild(sp);
+      list.appendChild(label);
+    });
+    syncTopicUI();
+  }
+
+  function onTopicCheckChange() {
+    selectedTopicKeys = Array.prototype.map.call(
+      document.querySelectorAll('#topicCheckboxList input[type=checkbox]:checked'),
+      function (cb) { return cb.value; });
+    syncTopicUI();
+    renderNotes();
+  }
+
+  function syncTopicUI() {
+    var all = $('topicSelectAll');
+    if (all) all.checked = state.topics.length > 0 && selectedTopicKeys.length === state.topics.length;
+    var n = selectedTopicKeys.length, total = state.topics.length;
+    $('topicBtnText').textContent =
+      n === total ? '全部主題' : (n === 0 ? '未選擇主題' : '已選擇 ' + n + ' 個主題');
+  }
+
+  function toggleSelectAllTopics(checked) {
+    selectedTopicKeys = checked ? state.topics.map(topicKey) : [];
+    renderTopicDropdown();
+    renderNotes();
   }
 
   function filteredNotes() {
     var q = $('searchInput').value.trim().toLowerCase();
-    var tf = $('topicFilter').value;
     return state.notes.filter(function (n) {
-      if (tf) {
-        var key = (n.topicId || '') + '‖' + (n.topicName || '');
-        if (key !== tf) return false;
-      }
+      var key = (n.topicId || '') + '‖' + (n.topicName || '');
+      if (selectedTopicKeys.indexOf(key) === -1) return false;
       if (q) {
-        var hay = [n.zh, n.foreign, n.roman, n.topicName].join(' ').toLowerCase();
+        var hay = [n.topicId, n.zh, n.foreign, n.roman, n.topicName].join(' ').toLowerCase();
         if (hay.indexOf(q) < 0) return false;
       }
       return true;
@@ -134,16 +205,19 @@
     $('noteCount').textContent = '共 ' + state.notes.length + ' 句' + (list.length !== state.notes.length ? '／顯示 ' + list.length + ' 句' : '');
     if (!list.length) {
       div.innerHTML = '<div class="empty">還沒有句子。去「學新句」用 AI 整理第一批，或到「設定」匯入舊站資料。</div>';
+      updateSelectCount();
       return;
     }
     var L = langProfile();
     list.forEach(function (n) {
+      var lid = noteLegacyId(n);
       var card = document.createElement('div');
       card.className = 'note-card';
+      card.setAttribute('data-id', n._id);
       card.innerHTML =
         '<label class="note-check"><input type="checkbox" data-id="' + n._id + '"></label>' +
         '<div class="note-body">' +
-          '<div class="note-zh">' + esc(n.zh || '') +
+          '<div class="note-zh">' + (lid ? '<span class="id-badge">#' + esc(lid) + '</span>' : '') + esc(n.zh || '') +
             (n.topicName ? ' <span class="topic-badge">' + esc(n.topicId ? '#' + n.topicId + ' ' : '') + esc(n.topicName) + '</span>' : '') + '</div>' +
           '<div class="note-foreign" lang="' + esc(L.locale) + '">' + esc(n.foreign || '') + '</div>' +
           (n.roman ? '<div class="note-roman">' + esc(n.roman) + '</div>' : '') +
@@ -155,19 +229,47 @@
         '</div>';
       div.appendChild(card);
     });
+    updateSelectCount();
+    markPlayingCard();
+  }
+
+  /* 全選目前顯示句子（對齊舊站）：再按一次全取消。 */
+  function updateSelectCount() {
+    var boxes = document.querySelectorAll('#noteList input[type=checkbox]');
+    var checked = document.querySelectorAll('#noteList input[type=checkbox]:checked');
+    $('selectCount').textContent = '共 ' + boxes.length + ' 句／已選 ' + checked.length + ' 句';
+    var all = $('selectAllBox');
+    if (all) all.checked = boxes.length > 0 && checked.length === boxes.length;
+  }
+  function toggleSelectAllShown(checked) {
+    Array.prototype.forEach.call(
+      document.querySelectorAll('#noteList input[type=checkbox]'),
+      function (cb) { cb.checked = checked; });
+    updateSelectCount();
   }
 
   function findNote(id) { return state.notes.find(function (n) { return n._id === id; }); }
 
   $('noteList').addEventListener('click', function (e) {
     var btn = e.target.closest('button[data-act]');
-    if (!btn) return;
-    var n = findNote(btn.getAttribute('data-id'));
-    if (!n) return;
-    var act = btn.getAttribute('data-act');
-    if (act === 'play') playSentence(n, btn);
-    else if (act === 'edit') openEditor(n);
-    else if (act === 'del' && confirm('確定刪除這句？')) deleteNote(n);
+    if (btn) {
+      var n = findNote(btn.getAttribute('data-id'));
+      if (!n) return;
+      var act = btn.getAttribute('data-act');
+      if (act === 'play') playSentence(n, btn);
+      else if (act === 'edit') openEditor(n);
+      else if (act === 'del' && confirm('確定刪除這句？')) deleteNote(n);
+      return;
+    }
+    /* 對齊舊站：點整行切換勾選（按鈕／輸入框本身除外）。 */
+    if (e.target.closest('input, label, a, textarea, select')) return;
+    var card = e.target.closest('.note-card');
+    if (!card) return;
+    var cb = card.querySelector('input[type=checkbox]');
+    if (cb) { cb.checked = !cb.checked; updateSelectCount(); }
+  });
+  $('noteList').addEventListener('change', function (e) {
+    if (e.target.matches('input[type=checkbox]')) updateSelectCount();
   });
 
   async function deleteNote(n) {
@@ -243,9 +345,61 @@
   function playUrl(url) {
     return new Promise(function (resolve) {
       var a = new Audio(url);
-      a.onended = a.onerror = function () { resolve(); };
-      a.play().catch(function () { resolve(); });
+      state.currentAudio = a;
+      a.onended = a.onerror = function () { state.currentAudio = null; resolve(); };
+      a.play().catch(function () { state.currentAudio = null; resolve(); });
     });
+  }
+
+  /* ---------- 暫停／繼續（對齊舊站 ⏸ 暫停） ---------- */
+  function setPausedUI() {
+    $('pauseBtn').textContent = state.paused ? '▶ 繼續' : '⏸ 暫停';
+  }
+  function togglePause() {
+    if (!state.playing) return;
+    if (state.paused) {
+      state.paused = false;
+      if (state.currentAudio) { state.currentAudio.play().catch(function () {}); }
+      else { try { speechSynthesis.resume(); } catch (_) {} }
+    } else {
+      state.paused = true;
+      if (state.currentAudio) { state.currentAudio.pause(); }
+      else { try { speechSynthesis.pause(); } catch (_) {} }
+    }
+    setPausedUI();
+  }
+  function beginPlaybackUI() {
+    state.paused = false; setPausedUI();
+    $('pauseBtn').disabled = false;
+  }
+  function endPlaybackUI() {
+    state.paused = false; setPausedUI();
+    $('pauseBtn').disabled = true;
+    state.currentAudio = null;
+    showNowPlaying(null);
+  }
+
+  /* ---------- 播放中顯示＋卡片高亮（對齊舊站） ---------- */
+  function showNowPlaying(n) {
+    var bar = $('nowPlaying');
+    state.currentNote = n || null;
+    if (!n) { bar.hidden = true; markPlayingCard(); return; }
+    bar.hidden = false;
+    $('npForeign').textContent = n.foreign || '';
+    $('npRoman').textContent = n.roman || '';
+    $('npZh').textContent = n.zh || '';
+    /* ✨ 解釋目前只支援印地文（沿用舊站 Gemini 服務）。 */
+    $('explainBtn').style.display = (state.lang === 'hi') ? '' : 'none';
+    markPlayingCard();
+  }
+  function markPlayingCard() {
+    Array.prototype.forEach.call(
+      document.querySelectorAll('#noteList .note-card.playing'),
+      function (c) { c.classList.remove('playing'); });
+    if (state.currentNote) {
+      var card = document.querySelector('#noteList .note-card[data-id="' + state.currentNote._id + '"]');
+      if (card) card.classList.add('playing');
+    }
   }
 
   async function azureForeign(text, locale) {
@@ -279,8 +433,10 @@
   async function playSentence(n, btn) {
     if (state.playing) { stopPlayback(); return; }
     state.playing = true; state.stopFlag = false;
+    beginPlaybackUI();
     if (btn) btn.classList.add('playing');
     $('playState').textContent = '▶ 播放中：' + (n.zh || n.foreign || '').slice(0, 24);
+    showNowPlaying(n);
     try {
       if (n.audioUrl) {
         /* 舊站匯入：MP3 已含完整版式（中文1遍＋外語3遍），直接播。 */
@@ -297,11 +453,14 @@
       state.playing = false;
       if (btn) btn.classList.remove('playing');
       $('playState').textContent = '';
+      endPlaybackUI();
     }
   }
 
   function stopPlayback() {
     state.stopFlag = true;
+    state.paused = false; setPausedUI();
+    try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
     try { speechSynthesis.cancel(); } catch (_) {}
   }
 
@@ -312,6 +471,7 @@
     if (!ids.length) { alert('請先勾選句子。'); return; }
     if (state.playing) { stopPlayback(); return; }
     state.playing = true; state.stopFlag = false;
+    beginPlaybackUI();
     $('playSelectedBtn').textContent = '⏹ 停止';
     var loop = $('loopCheck').checked;
     try {
@@ -325,11 +485,13 @@
       state.playing = false;
       $('playSelectedBtn').textContent = '▶ 播放勾選';
       $('playState').textContent = '';
+      endPlaybackUI();
     }
   }
 
   async function playSentenceInner(n) {
     $('playState').textContent = '▶ 播放中：' + (n.zh || n.foreign || '').slice(0, 24);
+    showNowPlaying(n);
     if (n.audioUrl) { await playUrl(n.audioUrl); return; }
     var L = langProfile();
     if (n.zh) await speakBrowser(n.zh, 'zh-TW', 0.9);
@@ -337,6 +499,58 @@
       await playForeign(n.foreign, L.locale);
       if (!state.stopFlag) await sleep(700);
     }
+  }
+
+  /* ---------- ✨ 解釋（移植舊站 Gemini 面板，僅印地文） ---------- */
+  var GEMINI_WEB_APP = 'https://script.google.com/macros/s/AKfycbwJSRywJnRF-H7B8imfFNzGAL-Af32AEOuMZUMgAUKc7zg1Yox4NedVWz1IeljRKc7jiQ/exec';
+
+  function explainCurrentSentence() {
+    var n = state.currentNote;
+    if (!n || !n.foreign) { alert('請先播放一句話。'); return; }
+    $('geminiOriginalHindi').textContent = n.foreign || '';
+    $('geminiOriginalRoman').textContent = n.roman || '';
+    $('geminiOriginalZh').textContent = n.zh || '';
+    $('geminiPanel').style.display = 'block';
+    var statusBox = $('geminiStatus'), resultBox = $('geminiResult');
+    statusBox.style.display = 'block';
+    statusBox.textContent = '⏳ 正在連線 Gemini AI，請稍候……';
+    resultBox.textContent = '';
+    var btn = $('explainBtn');
+    btn.textContent = '⏳ 解釋中…'; btn.disabled = true;
+    var callbackName = 'geminiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+    var script = document.createElement('script');
+    var completed = false, timeoutId = null;
+    function cleanup() {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
+      if (timeoutId) clearTimeout(timeoutId);
+      btn.textContent = '✨ 解釋'; btn.disabled = false;
+    }
+    window[callbackName] = function (result) {
+      if (completed) return; completed = true;
+      if (!result || !result.ok) {
+        statusBox.textContent = '❌ ' + ((result && result.error) || 'Gemini 沒有回傳資料。');
+      } else {
+        statusBox.style.display = 'none';
+        resultBox.textContent = result.text || 'Gemini 沒有回傳解釋內容。';
+      }
+      cleanup();
+    };
+    script.onerror = function () {
+      if (completed) return; completed = true;
+      statusBox.textContent = '❌ 無法連線解釋服務。';
+      cleanup();
+    };
+    script.src = GEMINI_WEB_APP + '?callback=' + encodeURIComponent(callbackName) +
+      '&hindi=' + encodeURIComponent(n.foreign || '') +
+      '&zh=' + encodeURIComponent(n.zh || '');
+    script.async = true;
+    document.body.appendChild(script);
+    timeoutId = setTimeout(function () {
+      if (completed) return; completed = true;
+      statusBox.textContent = '❌ 等待超過 90 秒，後端沒有回傳。';
+      cleanup();
+    }, 90000);
   }
 
   /* ---------- 學新句：提示辭工作流 ---------- */
@@ -492,6 +706,7 @@
   async function setLang(code) {
     if (!LL_LANGS[code] || code === state.lang) return;
     state.lang = code;
+    prevTopicKeys = []; selectedTopicKeys = [];
     try {
       await profileRef().set({ currentLang: code, updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
     } catch (err) { console.error(err); }
@@ -551,6 +766,7 @@
           batch.set(col.doc(), {
             zh: (r[3] || '').trim(), foreign: (r[1] || '').trim(), roman: (r[2] || '').trim(),
             topicId: (r[5] || '').trim(), topicName: (r[6] || '').trim(),
+            legacyId: id,
             audioUrl: OLD_AUDIO_BASE + file,
             source: 'legacy-import', createdAt: ts, updatedAt: ts
           });
@@ -563,6 +779,28 @@
       switchTab('library');
       await loadNotes();
     } catch (err) { $('settingsMsg').textContent = '匯入失敗：' + (err.message || err); }
+  }
+
+  async function dedupeNotes() {
+    if (!state.notes.length) { alert('目前沒有句子。'); return; }
+    var seen = {}, dupIds = [];
+    state.notes.forEach(function (n) {
+      var key = n.audioUrl || ('t:' + n.foreign + '‖' + n.zh);
+      if (seen[key]) dupIds.push(n._id);
+      else seen[key] = true;
+    });
+    if (!dupIds.length) { $('settingsMsg').textContent = '檢查完成，沒有重複句子。'; return; }
+    if (!confirm('找到 ' + dupIds.length + ' 句重複，確定刪除嗎？（每組只保留一句）')) return;
+    $('settingsMsg').textContent = '刪除重複中…';
+    try {
+      for (var i = 0; i < dupIds.length; i += 400) {
+        var batch = db().batch();
+        dupIds.slice(i, i + 400).forEach(function (id) { batch.delete(langCol('notes').doc(id)); });
+        await batch.commit();
+      }
+      $('settingsMsg').textContent = '完成，共刪除 ' + dupIds.length + ' 句重複。';
+      await loadNotes();
+    } catch (err) { $('settingsMsg').textContent = '刪除失敗：' + (err.message || err); }
   }
 
   async function exportBackup() {
@@ -578,9 +816,23 @@
   /* ---------- 事件綁定 ---------- */
   function bindUI() {
     TABS.forEach(function (t) { $('nav-' + t).addEventListener('click', function () { switchTab(t); }); });
-    $('topicFilter').addEventListener('change', renderNotes);
+    /* 主題多選下拉 */
+    $('topicDropdownBtn').addEventListener('click', function (e) {
+      e.stopPropagation();
+      var m = $('topicDropdownMenu');
+      m.hidden = !m.hidden;
+    });
+    document.addEventListener('click', function (e) {
+      var dd = $('topicDropdown');
+      if (dd && !dd.contains(e.target)) $('topicDropdownMenu').hidden = true;
+    });
+    $('topicSelectAll').addEventListener('change', function (e) { toggleSelectAllTopics(e.target.checked); });
     $('searchInput').addEventListener('input', renderNotes);
     $('playSelectedBtn').addEventListener('click', playSelected);
+    $('pauseBtn').addEventListener('click', togglePause);
+    $('selectAllBox').addEventListener('change', function (e) { toggleSelectAllShown(e.target.checked); });
+    $('explainBtn').addEventListener('click', explainCurrentSentence);
+    $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
     $('addNoteBtn').addEventListener('click', function () { openEditor(null); });
     $('saveEditBtn').addEventListener('click', saveEditor);
     $('copyLearnBtn').addEventListener('click', copyLearnPrompt);
@@ -592,6 +844,7 @@
     $('langSelect').addEventListener('change', function (e) { setLang(e.target.value); });
     $('testVoiceBtn').addEventListener('click', testVoice);
     $('importLegacyBtn').addEventListener('click', importLegacy);
+    $('dedupeBtn').addEventListener('click', dedupeNotes);
     $('exportBtn').addEventListener('click', exportBackup);
     window.addEventListener('ll-auth-changed', onAuthChanged);
     if (window.LL_AUTH && window.LL_AUTH.ready) onAuthChanged({ detail: window.LL_AUTH });
