@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="語言學習">
 <meta name="theme-color" content="#1e3a8a">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="styles.css?v=20261005-09">
+<link rel="stylesheet" href="styles.css?v=20261005-11">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -21,6 +21,9 @@
 <body>
 <header class="topbar">
   <h1>🌍 語言學習 <span class="en-sub">Language Learning</span></h1>
+  <label class="lang-pick">🌐
+    <select id="langSelectTop" aria-label="選擇學習語言"></select>
+  </label>
   <a class="back-link" href="https://f216002.github.io/chinese-sentence-bank-v4/">← 返回主頁 <span class="en-sub">Home</span></a>
   <div class="authbox">
     <div id="llTeacherAccount" hidden>
@@ -75,7 +78,6 @@
       </div>
       <div id="nowPlaying" class="now-playing" hidden>
         <div class="np-text"><div id="npForeign" class="np-foreign"></div><div id="npRoman" class="np-roman"></div><div id="npZh" class="np-zh"></div><div><span id="npSource" class="np-source"></span></div></div>
-        <button id="explainBtn" type="button" title="AI 解釋這句">✨ 解釋</button>
       </div>
       <p id="noteCount" class="muted"></p>
       <label class="select-all-row"><input type="checkbox" id="selectAllBox"> <strong>全選目前顯示句子</strong> <span id="selectCount" class="muted"></span></label>
@@ -203,6 +205,6 @@
   </div>
 </dialog>
 
-<script src="app.js?v=20261005-14"></script>
+<script src="app.js?v=20261005-16"></script>
 </body>
 </html>
