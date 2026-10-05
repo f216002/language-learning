@@ -10,13 +10,13 @@
 <meta name="apple-mobile-web-app-title" content="語言學習">
 <meta name="theme-color" content="#1e3a8a">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="styles.css?v=20261005-04">
+<link rel="stylesheet" href="styles.css?v=20261005-05">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <script src="ll-auth.js?v=20261005-02"></script>
-<script src="ll-lang.js?v=20261005-02"></script>
+<script src="ll-lang.js?v=20261005-03"></script>
 </head>
 <body>
 <header class="topbar">
@@ -87,15 +87,31 @@
   <section id="tab-learn" hidden>
     <div class="card">
       <h2>✨ 學新句 <span class="en-sub">AI workflow</span></h2>
-      <p class="hint">① 寫下你想表達的話 → ② 複製學習提示辭去 Gemini／ChatGPT 學 → ③ 複製整理提示辭請 AI 整理 → ④ 貼回來自動入庫。全程不用離開這個頁面找檔案。</p>
+      <p class="hint">① 寫下你想表達的話 → ② 用學習提示辭去 Gemini／ChatGPT 學 → ③ 用整理提示辭請 AI 整理成句 → ④ 貼回來自動入庫。</p>
       <label>你想表達的話（中文）：
         <textarea id="ideaInput" rows="3" placeholder="例如：我明天早上要去市場買菜，怎麼用印地文說？"></textarea>
       </label>
+      <p id="ideaMsg" class="muted" aria-live="polite"></p>
+    </div>
+    <div class="card">
+      <h3>① 學習提示辭 <span class="en-sub">Learn</span></h3>
+      <textarea id="learnPromptBox" rows="10" readonly aria-label="學習提示辭全文"></textarea>
       <div class="row wrap">
-        <button id="copyLearnBtn" type="button" class="primary">① 複製學習提示辭</button>
-        <button id="copyOrganizeBtn" type="button">② 複製整理提示辭</button>
+        <button id="copyLearnBtn" type="button">複製提示詞 <span class="en-sub">Copy prompt</span></button>
+        <button id="openLearnChatGPT" type="button" class="dark">複製並開啟 ChatGPT ↗ <span class="en-sub">Copy &amp; open ChatGPT ↗</span></button>
+        <button id="openLearnGemini" type="button" class="primary">複製並開啟 Gemini ↗ <span class="en-sub">Copy &amp; open Gemini ↗</span></button>
       </div>
-      <p id="learnMsg" class="muted" aria-live="polite"></p>
+      <p id="learnPromptMsg" class="muted" aria-live="polite"></p>
+    </div>
+    <div class="card">
+      <h3>② 整理提示辭 <span class="en-sub">Organize</span></h3>
+      <textarea id="organizePromptBox" rows="10" readonly aria-label="整理提示辭全文"></textarea>
+      <div class="row wrap">
+        <button id="copyOrganizeBtn" type="button">複製提示詞 <span class="en-sub">Copy prompt</span></button>
+        <button id="openOrganizeChatGPT" type="button" class="dark">複製並開啟 ChatGPT ↗ <span class="en-sub">Copy &amp; open ChatGPT ↗</span></button>
+        <button id="openOrganizeGemini" type="button" class="primary">複製並開啟 Gemini ↗ <span class="en-sub">Copy &amp; open Gemini ↗</span></button>
+      </div>
+      <p id="organizePromptMsg" class="muted" aria-live="polite"></p>
     </div>
     <div class="card">
       <h3>③ 貼上 AI 整理好的句子</h3>
@@ -108,6 +124,7 @@
         <button id="parseBtn" type="button" class="primary">解析預覽</button>
         <button id="saveParsedBtn" type="button" class="primary" hidden>✓ 全部存入句子庫</button>
       </div>
+      <p id="parseMsg" class="muted" aria-live="polite"></p>
       <div id="parsePreview"></div>
     </div>
   </section>
@@ -178,6 +195,6 @@
   </div>
 </dialog>
 
-<script src="app.js?v=20261005-04"></script>
+<script src="app.js?v=20261005-05"></script>
 </body>
 </html>
