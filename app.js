@@ -22,6 +22,13 @@
 
   function langProfile() { return LL_LANGS[state.lang] || LL_LANGS.hi; }
 
+  /* 管理員（f216002@gmail.com）：Azure 不限使用次數、不限句子長度。 */
+  function llIsAdmin() {
+    var u = window.LL_AUTH && window.LL_AUTH.user;
+    var adminEmail = window.LL_ADMIN_EMAIL || 'f216002@gmail.com';
+    return !!(u && u.email && String(u.email).toLowerCase() === String(adminEmail).toLowerCase());
+  }
+
   /* ---------- Firestore ---------- */
   function db() { return window.firebase.firestore(); }
   function langCol(name) {
@@ -172,6 +179,10 @@
   var editingId = null;
   function updateForeignCount() {
     var len = Array.from($('editForeign').value || '').length;
+    if (llIsAdmin()) {
+      $('foreignCount').textContent = len + ' 字（管理者：Azure 不限字數）';
+      return;
+    }
     $('foreignCount').textContent = len + ' / ' + LL_MAX_AZURE_CHARS + ' 字'
       + (len > LL_MAX_AZURE_CHARS ? '（超過上限，播放時改用瀏覽器語音，不耗 Azure 額度）' : '');
   }
@@ -253,7 +264,7 @@
 
   async function playForeign(text, locale) {
     var L = langProfile();
-    var tooLong = Array.from(text || '').length > LL_MAX_AZURE_CHARS;
+    var tooLong = !llIsAdmin() && Array.from(text || '').length > LL_MAX_AZURE_CHARS;
     if (L.cloudVoice && !tooLong) {
       try { return await playUrl(await azureForeign(text, locale)); }
       catch (err) { console.warn('Azure failed, browser fallback', err); }
@@ -370,7 +381,7 @@
       return { zh: it.zh, foreign: it.foreign, roman: it.roman, topicId: topicId, topicName: topicName, source: 'ai-import' };
     });
     items.forEach(function (it, i) {
-      var tooLong = it.foreign && Array.from(it.foreign).length > LL_MAX_AZURE_CHARS;
+      var tooLong = !llIsAdmin() && it.foreign && Array.from(it.foreign).length > LL_MAX_AZURE_CHARS;
       var d = document.createElement('div');
       d.className = 'preview-item';
       d.innerHTML = '<div class="preview-num">第 ' + (i + 1) + ' 句'
