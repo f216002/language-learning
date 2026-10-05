@@ -17,8 +17,8 @@
     user: null, uid: null, lang: 'hi',
     notes: [], inbox: [], topics: [],
     playQueue: [], playing: false, stopFlag: false, paused: false,
-    currentAudio: null, currentNote: null,
-    audioCache: new Map(), synthFn: null
+    currentAudio: null, currentNote: null, playToken: 0,
+    audioCache: new Map(), synthFn: null, audioSource: '', lastAudioFrom: ''
   };
 
   function langProfile() { return LL_LANGS[state.lang] || LL_LANGS.hi; }
@@ -412,17 +412,30 @@
   function speakBrowser(text, lang, rate) {
     return new Promise(function (resolve) {
       if (!('speechSynthesis' in window)) return resolve();
+      var done = false;
+      /* 看門狗：Chrome 的 speechSynthesis 有時永遠不觸發 onend（尤其 cancel 後緊接 speak），
+         加上超時保底，保證播放流程永遠不會凍結。時間估寬一點，寧可等完不提早切斷。 */
+      var timer = setTimeout(finish, Math.min(180000, 8000 + Array.from(text || '').length * 800));
+      function finish() {
+        if (done) return; done = true;
+        clearTimeout(timer);
+        try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); } catch (_) {}
+        resolve();
+      }
       try {
-        speechSynthesis.cancel();
+        /* 只有真的在講話或排隊時才 cancel，避免「cancel 後緊接 speak」觸發 Chrome 的卡住 bug。 */
+        if (speechSynthesis.speaking || speechSynthesis.pending) {
+          try { speechSynthesis.cancel(); } catch (_) {}
+        }
         var u = new SpeechSynthesisUtterance(text);
         u.lang = lang; u.rate = rate || 0.85;
         var vs = speechSynthesis.getVoices();
         var low = lang.toLowerCase();
         u.voice = vs.find(function (v) { return v.lang.toLowerCase() === low; }) ||
                   vs.find(function (v) { return v.lang.toLowerCase().indexOf(low.split('-')[0]) === 0; }) || null;
-        u.onend = u.onerror = function () { resolve(); };
+        u.onend = u.onerror = finish;
         speechSynthesis.speak(u);
-      } catch (_) { resolve(); }
+      } catch (_) { finish(); }
     });
   }
 
@@ -430,8 +443,28 @@
     return new Promise(function (resolve) {
       var a = new Audio(url);
       state.currentAudio = a;
-      a.onended = a.onerror = function () { state.currentAudio = null; resolve(); };
-      a.play().catch(function () { state.currentAudio = null; resolve(); });
+      var done = false, timer = null;
+      function finish() {
+        if (done) return; done = true;
+        if (timer) clearTimeout(timer);
+        if (state.currentAudio === a) state.currentAudio = null;
+        resolve();
+      }
+      /* 看門狗：先給 45 秒保底；讀到 duration 後改按實際長度＋緩衝，保證一定結束。 */
+      function arm(ms) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(function () { try { a.pause(); } catch (_) {} finish(); }, ms);
+      }
+      arm(45000);
+      try {
+        a.onloadedmetadata = function () {
+          var ms = 45000;
+          try { if (a.duration && isFinite(a.duration) && a.duration > 0) ms = a.duration * 1000 + 10000; } catch (_) {}
+          arm(Math.min(ms, 180000));
+        };
+      } catch (_) {}
+      a.onended = a.onerror = finish;
+      try { a.play().catch(finish); } catch (_) { finish(); }
     });
   }
 
@@ -486,17 +519,94 @@
     }
   }
 
+  /* ---------- Azure 音檔本機快取（IndexedDB，關掉重開還在；換聲音時改 tag 舊快取自動失效） ---------- */
+  var IDB_VOICE_TAG = { 'hi-IN': 'madhur-v1' };
+  function audioCacheKey(locale, text) {
+    return locale + '\n' + (IDB_VOICE_TAG[locale] || 'v1') + '\n' + text;
+  }
+  var idbAudio = null;
+  function openAudioDB() {
+    return new Promise(function (resolve) {
+      if (idbAudio) return resolve(idbAudio);
+      if (!('indexedDB' in window)) return resolve(null);
+      try {
+        var req = indexedDB.open('ll-audio-cache', 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore('audio'); };
+        req.onsuccess = function () {
+          idbAudio = req.result;
+          /* 清掉已失效的舊 tag 條目。 */
+          try {
+            var store = idbAudio.transaction('audio', 'readwrite').objectStore('audio');
+            var all = store.getAllKeys();
+            all.onsuccess = function () {
+              (all.result || []).forEach(function (k) {
+                var p = String(k).split('\n');
+                if (p.length < 3 || (IDB_VOICE_TAG[p[0]] || 'v1') !== p[1]) {
+                  try { store.delete(k); } catch (_) {}
+                }
+              });
+            };
+          } catch (_) {}
+          resolve(idbAudio);
+        };
+        req.onerror = function () { resolve(null); };
+      } catch (_) { resolve(null); }
+    });
+  }
+  function idbGet(key) {
+    return openAudioDB().then(function (db) {
+      if (!db) return null;
+      return new Promise(function (resolve) {
+        try {
+          var rq = db.transaction('audio', 'readonly').objectStore('audio').get(key);
+          rq.onsuccess = function () { resolve(rq.result || null); };
+          rq.onerror = function () { resolve(null); };
+        } catch (_) { resolve(null); }
+      });
+    });
+  }
+  function idbPut(key, val) {
+    openAudioDB().then(function (db) {
+      if (!db) return;
+      try { db.transaction('audio', 'readwrite').objectStore('audio').put(val, key); } catch (_) {}
+    });
+  }
+
+  /* ---------- 聲音來源標記（讓使用者親眼確認這句是 Azure 還是瀏覽器語音） ---------- */
+  var AUDIO_SOURCE_LABEL = {
+    'azure': 'Azure',
+    'cloud-cache': 'Azure · 雲端快取',
+    'idbcache': 'Azure · 本機快取',
+    'browser': '瀏覽器語音'
+  };
+  function setAudioSource(kind, detail) {
+    state.audioSource = kind;
+    var el = $('npSource');
+    if (!el) return;
+    el.textContent = AUDIO_SOURCE_LABEL[kind] || kind;
+    el.title = detail ? ('Azure 失敗原因：' + detail) : '';
+    el.className = 'np-source ' + (kind === 'browser' ? 'np-source-browser' : 'np-source-azure');
+  }
+
   async function azureForeign(text, locale) {
-    var key = locale + '\n' + text;
-    if (state.audioCache.has(key)) return state.audioCache.get(key);
+    var key = audioCacheKey(locale, text);
+    if (state.audioCache.has(key)) { state.lastAudioFrom = 'idbcache'; return state.audioCache.get(key); }
+    var local = await idbGet(key);
+    if (local) { state.audioCache.set(key, local); state.lastAudioFrom = 'idbcache'; return local; }
     if (!state.synthFn) {
       state.synthFn = window.firebase.app().functions('us-east1').httpsCallable('synthesizeV4Source', { timeout: 60000 });
     }
-    var res = await state.synthFn({ locale: locale, text: text });
+    /* 保底 70 秒：雲端函式無回應時也不凍結播放流程。 */
+    var res = await Promise.race([
+      state.synthFn({ locale: locale, text: text }),
+      sleep(70000).then(function () { throw new Error('Azure 請求逾時（70秒無回應）'); })
+    ]);
     var data = (res && res.data) || {};
     if (!data.audioBase64) throw new Error('empty audio');
     var url = 'data:' + (data.contentType || 'audio/mpeg') + ';base64,' + data.audioBase64;
     state.audioCache.set(key, url);
+    idbPut(key, url);
+    state.lastAudioFrom = data.cached ? 'cloud-cache' : 'azure';
     return url;
   }
 
@@ -504,12 +614,24 @@
     var L = langProfile();
     var tooLong = !llIsAdmin() && Array.from(text || '').length > LL_MAX_AZURE_CHARS;
     if (L.cloudVoice && !tooLong) {
-      try { return await playUrl(await azureForeign(text, locale)); }
-      catch (err) { console.warn('Azure failed, browser fallback', err); }
+      try {
+        var url = await azureForeign(text, locale);
+        setAudioSource(state.lastAudioFrom || 'azure');
+        await playUrl(url);
+        return;
+      } catch (err) {
+        var reason = (err && err.message) || String(err);
+        console.warn('Azure failed, browser fallback', err);
+        /* 失敗原因顯示出來，不再靜默降級。 */
+        setAudioSource('browser', reason);
+      }
     }
     if (tooLong) {
       var ps = $('playState');
       if (ps && ps.textContent.indexOf('瀏覽器語音') < 0) ps.textContent += '（超過' + LL_MAX_AZURE_CHARS + '字，改用瀏覽器語音）';
+      setAudioSource('browser', '超過 ' + LL_MAX_AZURE_CHARS + ' 字上限');
+    } else if (!L.cloudVoice) {
+      setAudioSource('browser');
     }
     await speakBrowser(text, locale, 0.85);
   }
@@ -517,6 +639,7 @@
   async function playSentence(n, btn) {
     if (state.playing) { stopPlayback(); return; }
     state.playing = true; state.stopFlag = false;
+    var token = ++state.playToken;
     beginPlaybackUI();
     if (btn) btn.classList.add('playing');
     $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
@@ -524,19 +647,22 @@
     try {
       /* 只播外語（Azure）：學習者是懂中文的台灣老師，不需要聽中文。 */
       var L = langProfile();
-      for (var i = 0; i < 3 && !state.stopFlag; i++) {
+      for (var i = 0; i < 3 && !state.stopFlag && token === state.playToken; i++) {
         await playForeign(n.foreign, L.locale);
-        if (!state.stopFlag) await sleep(700);
+        if (!state.stopFlag && token === state.playToken) await sleep(700);
       }
     } finally {
-      state.playing = false;
-      if (btn) btn.classList.remove('playing');
-      $('playState').textContent = '';
-      endPlaybackUI();
+      if (token === state.playToken) {
+        state.playing = false;
+        if (btn) btn.classList.remove('playing');
+        $('playState').textContent = '';
+        endPlaybackUI();
+      }
     }
   }
 
   function stopPlayback() {
+    state.playToken++;
     state.stopFlag = true;
     state.paused = false; setPausedUI();
     try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
@@ -550,32 +676,35 @@
     if (!ids.length) { alert('請先勾選句子。'); return; }
     if (state.playing) { stopPlayback(); return; }
     state.playing = true; state.stopFlag = false;
+    var token = ++state.playToken;
     beginPlaybackUI();
     $('playSelectedBtn').textContent = '⏹ 停止';
     var loop = $('loopCheck').checked;
     try {
       do {
-        for (var i = 0; i < ids.length && !state.stopFlag; i++) {
+        for (var i = 0; i < ids.length && !state.stopFlag && token === state.playToken; i++) {
           var n = findNote(ids[i]);
-          if (n) await playSentenceInner(n);
+          if (n) await playSentenceInner(n, token);
         }
-      } while (loop && !state.stopFlag);
+      } while (loop && !state.stopFlag && token === state.playToken);
     } finally {
-      state.playing = false;
-      $('playSelectedBtn').textContent = '▶ 播放勾選';
-      $('playState').textContent = '';
-      endPlaybackUI();
+      if (token === state.playToken) {
+        state.playing = false;
+        $('playSelectedBtn').textContent = '▶ 播放勾選';
+        $('playState').textContent = '';
+        endPlaybackUI();
+      }
     }
   }
 
-  async function playSentenceInner(n) {
+  async function playSentenceInner(n, token) {
     $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
     /* 只播外語（Azure 3 遍），不播中文。 */
     var L = langProfile();
-    for (var i = 0; i < 3 && !state.stopFlag; i++) {
+    for (var i = 0; i < 3 && !state.stopFlag && (token === undefined || token === state.playToken); i++) {
       await playForeign(n.foreign, L.locale);
-      if (!state.stopFlag) await sleep(700);
+      if (!state.stopFlag && (token === undefined || token === state.playToken)) await sleep(700);
     }
   }
 
