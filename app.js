@@ -520,7 +520,7 @@
   }
 
   /* ---------- Azure 音檔本機快取（IndexedDB，關掉重開還在；換聲音時改 tag 舊快取自動失效） ---------- */
-  var IDB_VOICE_TAG = { 'hi-IN': 'madhur-v1' };
+  var IDB_VOICE_TAG = { 'hi-IN': 'madhur-v2' }; /* 2026-10-05 後端男聲上線，bump 使舊女聲本機快取失效 */
   function audioCacheKey(locale, text) {
     return locale + '\n' + (IDB_VOICE_TAG[locale] || 'v1') + '\n' + text;
   }
