@@ -1,6 +1,11 @@
 /* 語言學習：16 種語言配置＋提示辭產生器。
    提示辭以 ~/workspace/your_files/lang-learning-prompts.md 的印地文原版為準本，
    此處參數化產生（§三模板），R1–R5 改寫規則（2026-10-05 Cheng 已確認）。 */
+
+/* Azure 單句字數上限（2026-10-05 Cheng 定案 200 字）：
+   超過此數的句子不走 Azure，改用免費的瀏覽器語音，避免額度被長文灌爆。
+   Cloud Function 另有 300 字硬上限作為最後防線。 */
+var LL_MAX_AZURE_CHARS = 200;
 var LL_LANGS = {
   hi: { code:'hi', name:'Hindi', nameZh:'印地文', locale:'hi-IN', scriptName:'天城文',
     requiresRomanization:true, cloudVoice:true,
