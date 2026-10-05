@@ -557,17 +557,15 @@
   function currentLearnPrompt() { return llBuildLearnPrompt(state.lang); }
   function currentOrganizePrompt() { return llBuildOrganizePrompt(state.lang); }
 
-  /* V4 式提示辭區：顯示全文＋三鍵（複製／複製並開啟 ChatGPT／複製並開啟 Gemini）。 */
-  function learnPromptText() {
+  /* 學新句三段式：提示詞由系統在背景自動加上，使用者只管輸入／按鍵／貼上。 */
+  function learnFullText() {
     var idea = $('ideaInput').value.trim();
     return currentLearnPrompt() + (idea ? '\n\n我想表達的內容：\n' + idea : '');
   }
-  function organizePromptText() { return currentOrganizePrompt(); }
-
-  function refreshPromptBoxes() {
-    var lp = $('learnPromptBox'), op = $('organizePromptBox');
-    if (lp) lp.value = learnPromptText();
-    if (op) op.value = organizePromptText();
+  function requireIdea() {
+    var idea = $('ideaInput').value.trim();
+    if (!idea) { alert('請先在上面輸入你想表達的中文。'); $('ideaInput').focus(); return null; }
+    return idea;
   }
 
   function copyTextFallback(t) {
@@ -585,21 +583,32 @@
     }
     return Promise.resolve(copyTextFallback(t));
   }
+  function isMobileDevice() {
+    return window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  }
 
-  function copyPrompt(which) {
-    var t = which === 'learn' ? learnPromptText() : organizePromptText();
-    var msgId = which === 'learn' ? 'learnPromptMsg' : 'organizePromptMsg';
-    copyTextRaw(t).then(function (ok) {
-      $(msgId).textContent = ok ? '已複製，去貼上吧。' : '複製失敗，請手動從上方文字框複製。';
+  /* ①：複製學習提示詞（含中文） */
+  function copyLearn() {
+    if (!requireIdea()) return;
+    copyTextRaw(learnFullText()).then(function (ok) {
+      $('step1Msg').textContent = ok ? '已複製（含提示詞），去 ChatGPT／Gemini 貼上吧。' : '複製失敗，請重試。';
+    });
+  }
+  function copyAndOpenLearn(url) {
+    if (!requireIdea()) return;
+    copyTextRaw(learnFullText()).then(function () {
+      if (isMobileDevice()) window.location.assign(url);
+      else window.open(url, '_blank', 'noopener,noreferrer');
     });
   }
 
-  function copyAndOpenPrompt(which, url) {
-    var t = which === 'learn' ? learnPromptText() : organizePromptText();
-    var isMobile = window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    copyTextRaw(t).then(function () {
-      if (isMobile) window.location.assign(url);
-      else window.open(url, '_blank', 'noopener,noreferrer');
+  /* ②：把貼上的解釋填入整理提示辭的佔位符，一鍵複製。 */
+  function combineOrganizeAndCopy() {
+    var exp = $('explanationInput').value.trim();
+    if (!exp) { alert('請先貼上 AI 的解釋內容。'); $('explanationInput').focus(); return; }
+    var t = currentOrganizePrompt().replace('請填入筆記內容', exp);
+    copyTextRaw(t).then(function (ok) {
+      $('step2Msg').textContent = ok ? '已加入整理提示詞並複製，回去剛才的 AI 頁面貼上送出吧。' : '複製失敗，請重試。';
     });
   }
 
@@ -726,7 +735,6 @@
       sel.appendChild(o);
     });
     $('libraryTitle').textContent = L.nameZh + '句子庫';
-    refreshPromptBoxes();
   }
 
   async function setLang(code) {
@@ -861,13 +869,10 @@
     $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
     $('addNoteBtn').addEventListener('click', function () { openEditor(null); });
     $('saveEditBtn').addEventListener('click', saveEditor);
-    $('copyLearnBtn').addEventListener('click', function () { copyPrompt('learn'); });
-    $('openLearnChatGPT').addEventListener('click', function () { copyAndOpenPrompt('learn', 'https://chatgpt.com/'); });
-    $('openLearnGemini').addEventListener('click', function () { copyAndOpenPrompt('learn', 'https://gemini.google.com/app'); });
-    $('copyOrganizeBtn').addEventListener('click', function () { copyPrompt('organize'); });
-    $('openOrganizeChatGPT').addEventListener('click', function () { copyAndOpenPrompt('organize', 'https://chatgpt.com/'); });
-    $('openOrganizeGemini').addEventListener('click', function () { copyAndOpenPrompt('organize', 'https://gemini.google.com/app'); });
-    $('ideaInput').addEventListener('input', refreshPromptBoxes);
+    $('copyLearnBtn').addEventListener('click', copyLearn);
+    $('openLearnChatGPT').addEventListener('click', function () { copyAndOpenLearn('https://chatgpt.com/'); });
+    $('openLearnGemini').addEventListener('click', function () { copyAndOpenLearn('https://gemini.google.com/app'); });
+    $('combineOrganizeBtn').addEventListener('click', combineOrganizeAndCopy);
     $('parseBtn').addEventListener('click', parsePreview);
     $('saveParsedBtn').addEventListener('click', saveParsed);
     $('addInboxBtn').addEventListener('click', addInbox);
