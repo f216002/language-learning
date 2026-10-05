@@ -520,7 +520,8 @@
   }
 
   /* ---------- Azure 音檔本機快取（IndexedDB，關掉重開還在；換聲音時改 tag 舊快取自動失效） ---------- */
-  var IDB_VOICE_TAG = { 'hi-IN': 'madhur-v2' }; /* 2026-10-05 後端男聲上線，bump 使舊女聲本機快取失效 */
+  var IDB_VOICE_TAG = { 'hi-IN': 'madhur-v2', 'id-ID': 'gadis-v1', 'es-ES': 'elvira-v1',
+    'en-US': 'jenny-v1', 'de-DE': 'katja-v1', 'ko-KR': 'sunhi-v1', 'ja-JP': 'nanami-v1' }; /* 2026-10-05 後端男聲上線，bump 使舊女聲本機快取失效 */
   function audioCacheKey(locale, text) {
     return locale + '\n' + (IDB_VOICE_TAG[locale] || 'v1') + '\n' + text;
   }
