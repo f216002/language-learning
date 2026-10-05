@@ -170,6 +170,11 @@
 
   /* ---------- 新增／編輯 ---------- */
   var editingId = null;
+  function updateForeignCount() {
+    var len = Array.from($('editForeign').value || '').length;
+    $('foreignCount').textContent = len + ' / ' + LL_MAX_AZURE_CHARS + ' 字'
+      + (len > LL_MAX_AZURE_CHARS ? '（超過上限，播放時改用瀏覽器語音，不耗 Azure 額度）' : '');
+  }
   function openEditor(n) {
     editingId = n ? n._id : null;
     $('editZh').value = n ? n.zh || '' : '';
@@ -178,6 +183,7 @@
     $('editTopicId').value = n ? n.topicId || '' : '';
     $('editTopicName').value = n ? n.topicName || '' : '';
     $('editorTitle').textContent = n ? '編輯句子' : '新增句子';
+    updateForeignCount();
     $('editDialog').showModal();
   }
 
@@ -247,9 +253,14 @@
 
   async function playForeign(text, locale) {
     var L = langProfile();
-    if (L.cloudVoice) {
+    var tooLong = Array.from(text || '').length > LL_MAX_AZURE_CHARS;
+    if (L.cloudVoice && !tooLong) {
       try { return await playUrl(await azureForeign(text, locale)); }
       catch (err) { console.warn('Azure failed, browser fallback', err); }
+    }
+    if (tooLong) {
+      var ps = $('playState');
+      if (ps && ps.textContent.indexOf('瀏覽器語音') < 0) ps.textContent += '（超過' + LL_MAX_AZURE_CHARS + '字，改用瀏覽器語音）';
     }
     await speakBrowser(text, locale, 0.85);
   }
@@ -359,9 +370,11 @@
       return { zh: it.zh, foreign: it.foreign, roman: it.roman, topicId: topicId, topicName: topicName, source: 'ai-import' };
     });
     items.forEach(function (it, i) {
+      var tooLong = it.foreign && Array.from(it.foreign).length > LL_MAX_AZURE_CHARS;
       var d = document.createElement('div');
       d.className = 'preview-item';
-      d.innerHTML = '<div class="preview-num">第 ' + (i + 1) + ' 句</div>' +
+      d.innerHTML = '<div class="preview-num">第 ' + (i + 1) + ' 句'
+        + (tooLong ? ' <span class="topic-badge">超過' + LL_MAX_AZURE_CHARS + '字</span>' : '') + '</div>' +
         '<div>中文：' + esc(it.zh) + '</div>' +
         '<div>' + esc(langProfile().scriptName) + '：' + esc(it.foreign) + '</div>' +
         (it.roman ? '<div class="note-roman">' + esc(it.roman) + '</div>' : '');
@@ -564,6 +577,7 @@
     $('parseBtn').addEventListener('click', parsePreview);
     $('saveParsedBtn').addEventListener('click', saveParsed);
     $('addInboxBtn').addEventListener('click', addInbox);
+    $('editForeign').addEventListener('input', updateForeignCount);
     $('langSelect').addEventListener('change', function (e) { setLang(e.target.value); });
     $('testVoiceBtn').addEventListener('click', testVoice);
     $('importLegacyBtn').addEventListener('click', importLegacy);
