@@ -133,11 +133,11 @@
       return String(a.name).localeCompare(String(b.name), 'zh-Hant');
     });
     var newKeys = state.topics.map(topicKey);
-    if (!prevTopicKeys.length || newKeys.length !== prevTopicKeys.length) {
-      /* 首次載入、切換語言或主題增減：預設全選（開啟即顯示全部）。 */
-      selectedTopicKeys = newKeys;
+    if (!prevTopicKeys.length) {
+      /* 首次載入／切換語言：預設空白（對齊舊站），讓使用者自己挑選主題或全選。 */
+      selectedTopicKeys = [];
     } else {
-      /* 主題不變（刪除／編輯句子）：保留使用者之前的勾選。 */
+      /* 主題增減或更名：保留仍存在的已選主題。 */
       selectedTopicKeys = selectedTopicKeys.filter(function (k) { return newKeys.indexOf(k) !== -1; });
     }
     prevTopicKeys = newKeys;
@@ -149,8 +149,10 @@
     list.innerHTML = '';
     state.topics.forEach(function (t) {
       var key = topicKey(t);
+      var row = document.createElement('div');
+      row.className = 'topic-item';
       var label = document.createElement('label');
-      label.className = 'topic-item';
+      label.className = 'topic-check';
       var cb = document.createElement('input');
       cb.type = 'checkbox'; cb.value = key;
       cb.checked = selectedTopicKeys.indexOf(key) !== -1;
@@ -158,9 +160,58 @@
       var sp = document.createElement('span');
       sp.textContent = (t.id ? '#' + t.id + ' ' : '') + (t.name || '(未分類)') + ' (' + t.count + ')';
       label.appendChild(cb); label.appendChild(sp);
-      list.appendChild(label);
+      var rn = document.createElement('button');
+      rn.type = 'button'; rn.className = 'topic-rename'; rn.title = '重新命名主題';
+      rn.textContent = '✏️';
+      rn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openTopicRename(key); });
+      row.appendChild(label); row.appendChild(rn);
+      list.appendChild(row);
     });
     syncTopicUI();
+  }
+
+  /* 主題批量更名：把該主題下全部句子的編號／名稱一起更新（含事後補主題）。 */
+  var renamingTopicKey = null;
+  function openTopicRename(key) {
+    var t = null;
+    state.topics.forEach(function (x) { if (topicKey(x) === key) t = x; });
+    if (!t) return;
+    renamingTopicKey = key;
+    $('topicEditId').value = t.id || '';
+    $('topicEditName').value = t.name || '';
+    $('topicDropdownMenu').hidden = true;
+    $('topicDialog').showModal();
+  }
+  async function saveTopicRename() {
+    var newId = $('topicEditId').value.trim();
+    var newName = $('topicEditName').value.trim();
+    var old = null;
+    state.topics.forEach(function (x) { if (topicKey(x) === renamingTopicKey) old = x; });
+    if (!old) { $('topicDialog').close(); return; }
+    var oldId = old.id || '', oldName = old.name || '';
+    if (newId === oldId && newName === oldName) { $('topicDialog').close(); return; }
+    var oldLabel = (oldId ? '#' + oldId + ' ' : '') + (oldName || '(未分類)');
+    var newLabel = (newId ? '#' + newId + ' ' : '') + (newName || '(未分類)');
+    if (!confirm('確定把主題「' + oldLabel + '」改為「' + newLabel + '」嗎？\n共 ' + old.count + ' 句會一起更新。')) return;
+    try {
+      var ts = window.firebase.firestore.FieldValue.serverTimestamp();
+      var ids = [];
+      state.notes.forEach(function (n) {
+        if ((n.topicId || '') === oldId && (n.topicName || '') === oldName) ids.push(n._id);
+      });
+      for (var i = 0; i < ids.length; i += 400) {
+        var batch = db().batch();
+        ids.slice(i, i + 400).forEach(function (id) {
+          batch.update(langCol('notes').doc(id), { topicId: newId, topicName: newName, updatedAt: ts });
+        });
+        await batch.commit();
+      }
+      /* 更名後保持該主題的勾選狀態。 */
+      var newKey = newId + '‖' + newName;
+      selectedTopicKeys = selectedTopicKeys.map(function (k) { return k === renamingTopicKey ? newKey : k; });
+      $('topicDialog').close();
+      await loadNotes();
+    } catch (err) { alert('更新失敗：' + (err.message || err)); }
   }
 
   function onTopicCheckChange() {
@@ -204,7 +255,11 @@
     div.innerHTML = '';
     $('noteCount').textContent = '共 ' + state.notes.length + ' 句' + (list.length !== state.notes.length ? '／顯示 ' + list.length + ' 句' : '');
     if (!list.length) {
-      div.innerHTML = '<div class="empty">還沒有句子。去「學新句」用 AI 整理第一批，或到「設定」匯入舊站資料。</div>';
+      var emptyMsg;
+      if (!state.notes.length) emptyMsg = '還沒有句子。去「學新句」用 AI 整理第一批，或到「設定」匯入舊站資料。';
+      else if (!selectedTopicKeys.length) emptyMsg = '請先從上方選擇主題（可複選，或勾選「全選全部主題」）。';
+      else emptyMsg = '沒有符合的句子，請調整主題選擇或搜尋關鍵字。';
+      div.innerHTML = '<div class="empty">' + emptyMsg + '</div>';
       updateSelectCount();
       return;
     }
@@ -435,19 +490,14 @@
     state.playing = true; state.stopFlag = false;
     beginPlaybackUI();
     if (btn) btn.classList.add('playing');
-    $('playState').textContent = '▶ 播放中：' + (n.zh || n.foreign || '').slice(0, 24);
+    $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
     try {
-      if (n.audioUrl) {
-        /* 舊站匯入：MP3 已含完整版式（中文1遍＋外語3遍），直接播。 */
-        if (!state.stopFlag) await playUrl(n.audioUrl);
-      } else {
-        var L = langProfile();
-        if (!state.stopFlag && n.zh) await speakBrowser(n.zh, 'zh-TW', 0.9);
-        for (var i = 0; i < 3 && !state.stopFlag; i++) {
-          await playForeign(n.foreign, L.locale);
-          if (!state.stopFlag) await sleep(700);
-        }
+      /* 只播外語（Azure）：學習者是懂中文的台灣老師，不需要聽中文。 */
+      var L = langProfile();
+      for (var i = 0; i < 3 && !state.stopFlag; i++) {
+        await playForeign(n.foreign, L.locale);
+        if (!state.stopFlag) await sleep(700);
       }
     } finally {
       state.playing = false;
@@ -490,11 +540,10 @@
   }
 
   async function playSentenceInner(n) {
-    $('playState').textContent = '▶ 播放中：' + (n.zh || n.foreign || '').slice(0, 24);
+    $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
-    if (n.audioUrl) { await playUrl(n.audioUrl); return; }
+    /* 只播外語（Azure 3 遍），不播中文。 */
     var L = langProfile();
-    if (n.zh) await speakBrowser(n.zh, 'zh-TW', 0.9);
     for (var i = 0; i < 3 && !state.stopFlag; i++) {
       await playForeign(n.foreign, L.locale);
       if (!state.stopFlag) await sleep(700);
@@ -861,6 +910,7 @@
       if (dd && !dd.contains(e.target)) $('topicDropdownMenu').hidden = true;
     });
     $('topicSelectAll').addEventListener('change', function (e) { toggleSelectAllTopics(e.target.checked); });
+    $('topicSaveBtn').addEventListener('click', saveTopicRename);
     $('searchInput').addEventListener('input', renderNotes);
     $('playSelectedBtn').addEventListener('click', playSelected);
     $('pauseBtn').addEventListener('click', togglePause);
