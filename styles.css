@@ -6,6 +6,8 @@
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif;background:var(--bg);color:var(--ink);padding-bottom:env(safe-area-inset-bottom,0)}
 .topbar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 14px;background:var(--primary);color:#fff;position:sticky;top:0;z-index:10}
 .topbar h1{font-size:1.15rem;margin:0}
+.topbar .back-link{color:#fff;text-decoration:none;font-size:.92rem;opacity:.92;white-space:nowrap}
+.topbar .back-link:hover{text-decoration:underline;opacity:1}
 .en-sub{font-size:.75em;opacity:.75;font-weight:400}
 .authbox{display:flex;align-items:center;gap:8px;font-size:.85rem}
 .authbox button{background:#fff;color:var(--primary);border:0;border-radius:8px;padding:7px 12px;font-weight:700;cursor:pointer}
