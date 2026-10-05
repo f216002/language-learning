@@ -68,9 +68,12 @@ dialog label input{margin-top:4px}
 .topic-dropdown{position:relative;min-width:200px}
 #topicDropdownBtn{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--ink);font-size:.95rem;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
 .topic-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:320px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,.15);z-index:50;padding:6px 0}
-.topic-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:.9rem;user-select:none}
+.topic-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px 6px 12px;font-size:.9rem;user-select:none}
 .topic-item:hover{background:#eff6ff}
-.topic-item input{width:18px;height:18px;accent-color:var(--accent);flex-shrink:0}
+.topic-check{display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0}
+.topic-check input{width:18px;height:18px;accent-color:var(--accent);flex-shrink:0}
+.topic-rename{border:0;background:none;font-size:.95rem;cursor:pointer;padding:4px 8px;opacity:.55;flex-shrink:0}
+.topic-rename:hover{opacity:1}
 .topic-all{background:#f8fafc}
 .topic-divider{height:1px;background:var(--line);margin:4px 0}
 /* ---- 全選列 ---- */
