@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261006-03';
+  var LL_APP_VERSION = '20261006-04';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -809,6 +809,18 @@
     await speakBrowser(text, locale, 0.85);
   }
 
+  /* 每句先播一次中文（瀏覽器語音 zh-TW，不走 Azure），再播三次外語。 */
+  async function playChineseOnce(n, token) {
+    if (!n.zh || state.stopFlag) return;
+    if (token !== undefined && token !== state.playToken) return;
+    await waitIfPaused();
+    if (state.stopFlag) return;
+    if (token !== undefined && token !== state.playToken) return;
+    setAudioSource('browser');
+    await speakBrowser(n.zh, 'zh-TW', 0.9);
+    if (!state.stopFlag && (token === undefined || token === state.playToken)) await sleep(500);
+  }
+
   async function playSentence(n, btn) {
     if (state.playing) {
       /* 播到一半點了別句的播放鍵：直接切換過去（先停舊的，等它完全退出再播新的），
@@ -827,8 +839,9 @@
     $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
     try {
-      /* 只播外語（Azure）：學習者是懂中文的台灣老師，不需要聽中文。 */
+      /* 每句先播一次中文，再播三次外語（Azure）。 */
       var L = langProfile();
+      await playChineseOnce(n, token);
       for (var i = 0; i < 3 && !state.stopFlag && token === state.playToken; i++) {
         await waitIfPaused();
         await playForeign(n.foreign, L.locale);
@@ -883,8 +896,9 @@
   async function playSentenceInner(n, token) {
     $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
-    /* 只播外語（Azure 3 遍），不播中文。 */
+    /* 每句先播一次中文，再播三次外語。 */
     var L = langProfile();
+    await playChineseOnce(n, token);
     for (var i = 0; i < 3 && !state.stopFlag && (token === undefined || token === state.playToken); i++) {
       await waitIfPaused();
       await playForeign(n.foreign, L.locale);
