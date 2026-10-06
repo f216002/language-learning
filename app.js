@@ -5,6 +5,9 @@
 (function () {
   'use strict';
 
+  /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
+  var LL_APP_VERSION = '20261006-01';
+
   function $(id) { return document.getElementById(id); }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -18,7 +21,8 @@
     notes: [], inbox: [], topics: [],
     playQueue: [], playing: false, stopFlag: false, paused: false,
     currentAudio: null, currentNote: null, playToken: 0, cancelWait: null,
-    audioCache: new Map(), synthFn: null, audioSource: '', lastAudioFrom: ''
+    audioCache: new Map(), synthFn: null, audioSource: '', lastAudioFrom: '',
+    playLog: []
   };
 
   function langProfile() { return LL_LANGS[state.lang] || LL_LANGS.hi; }
@@ -444,37 +448,79 @@
     });
   }
 
+  /* 共用單一 Audio 元素：iOS Safari 對頻繁 new Audio() 支援不穩，共用最可靠。 */
+  var sharedAudioEl = null;
+  function getAudioEl() {
+    if (!sharedAudioEl) {
+      sharedAudioEl = new Audio();
+      try { sharedAudioEl.preload = 'auto'; } catch (_) {}
+    }
+    return sharedAudioEl;
+  }
+
+  /* 播放診斷：記錄最近 20 次播放，供設定頁顯示。 */
+  function logPlay(entry) {
+    try {
+      state.playLog.push(entry);
+      if (state.playLog.length > 20) state.playLog.shift();
+      renderPlayDiag();
+    } catch (_) {}
+  }
+  function renderPlayDiag() {
+    var box = $('playDiagLog');
+    if (!box) return;
+    if (!state.playLog.length) { box.textContent = '尚無播放紀錄。'; return; }
+    box.textContent = state.playLog.map(function (e) {
+      return e.time + '｜' + e.text + '｜' + e.src + '｜' + e.ms + 'ms｜' + e.outcome + (e.err ? '｜' + e.err : '');
+    }).join('\n');
+  }
+
   function playUrl(url) {
     return new Promise(function (resolve) {
-      /* iOS Safari 用 data: URL 播音不可靠（play() 會靜默被拒絕，導致無聲跳過），
+      var t0 = Date.now();
+      var noteText = (state.currentNote && (state.currentNote.foreign || '')) || '';
+      /* iOS Safari 用 data: URL 播音不可靠（play() 會靜默被拒絕導致無聲跳過），
          先轉成 Blob URL 再播才穩定。轉換是純本機運算，不耗 Azure 額度。 */
-      var objectUrl = null, src = url;
-      var dm = /^data:([^;,]+);base64,(.*)$/.exec(url || '');
+      var objectUrl = null, src = url, convErr = '';
+      var dm = /^data:([^;,]+);base64,([\s\S]*)$/.exec(url || '');
       if (dm) {
         try {
-          var bin = atob(dm[2]);
+          var b64 = dm[2].replace(/\s+/g, '');
+          var bin = atob(b64);
           var bytes = new Uint8Array(bin.length);
           for (var bi = 0; bi < bin.length; bi++) bytes[bi] = bin.charCodeAt(bi);
           objectUrl = URL.createObjectURL(new Blob([bytes], { type: dm[1] || 'audio/mpeg' }));
           src = objectUrl;
-        } catch (_) { objectUrl = null; src = url; }
+        } catch (err) {
+          convErr = 'blob轉換失敗:' + ((err && err.message) || err);
+          objectUrl = null; src = url;
+        }
       }
-      var a = new Audio(src);
+      var a = getAudioEl();
+      try { a.pause(); } catch (_) {}
       state.currentAudio = a;
-      var done = false, timer = null;
-      function finish() {
+      var done = false, timer = null, playErr = convErr;
+      function finish(outcome) {
         if (done) return; done = true;
         if (timer) clearTimeout(timer);
         if (state.currentAudio === a) state.currentAudio = null;
         if (objectUrl) { try { URL.revokeObjectURL(objectUrl); } catch (_) {} }
+        logPlay({
+          time: new Date().toLocaleTimeString('zh-TW', { hour12: false }),
+          text: noteText.slice(0, 18),
+          src: state.lastAudioFrom || state.audioSource || '?',
+          ms: Date.now() - t0,
+          outcome: outcome,
+          err: playErr
+        });
         resolve();
       }
       /* 讓 stopPlayback 可以立刻叫醒這次等待，不用等看門狗。 */
-      state.cancelWait = function () { try { a.pause(); } catch (_) {} finish(); };
+      state.cancelWait = function () { try { a.pause(); } catch (_) {} finish('stopped'); };
       /* 看門狗：先給 45 秒保底；讀到 duration 後改按實際長度＋緩衝，保證一定結束。 */
       function arm(ms) {
         if (timer) clearTimeout(timer);
-        timer = setTimeout(function () { try { a.pause(); } catch (_) {} finish(); }, ms);
+        timer = setTimeout(function () { try { a.pause(); } catch (_) {} finish('watchdog'); }, ms);
       }
       arm(45000);
       try {
@@ -484,14 +530,20 @@
           arm(Math.min(ms, 180000));
         };
       } catch (_) {}
-      a.onended = a.onerror = finish;
+      a.onended = function () { finish('ended'); };
+      a.onerror = function () {
+        try { playErr = 'audio-error code=' + (a.error ? a.error.code : '?'); } catch (_) {}
+        finish('error');
+      };
+      try { a.src = src; } catch (_) {}
       try {
-        a.play().catch(function (err) {
-          /* play() 被拒絕才會到這裡：記下原因，不要無聲跳過。 */
+        var pr = a.play();
+        if (pr && pr.catch) pr.catch(function (err) {
+          playErr = 'play()被拒:' + ((err && err.name) || (err && err.message) || err);
           try { console.warn('audio play() rejected', err); } catch (_) {}
-          finish();
+          finish('play-rejected');
         });
-      } catch (_) { finish(); }
+      } catch (_) { finish('play-exception'); }
     });
   }
 
@@ -1136,6 +1188,12 @@
     $('importLegacyBtn').addEventListener('click', importLegacy);
     $('dedupeBtn').addEventListener('click', dedupeNotes);
     $('exportBtn').addEventListener('click', exportBackup);
+    /* 版本號＋播放診斷 */
+    try { $('appVersion').textContent = LL_APP_VERSION; } catch (_) {}
+    $('clearDiagBtn').addEventListener('click', function () {
+      state.playLog = []; renderPlayDiag();
+    });
+    renderPlayDiag();
     window.addEventListener('ll-auth-changed', onAuthChanged);
     if (window.LL_AUTH && window.LL_AUTH.ready) onAuthChanged({ detail: window.LL_AUTH });
   }
