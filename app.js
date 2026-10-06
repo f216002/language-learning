@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261006-02';
+  var LL_APP_VERSION = '20261006-03';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -15,6 +15,11 @@
     });
   }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  /* 暫停中就原地等待（不往下播），直到繼續或停止。 */
+  async function waitIfPaused() {
+    while (state.paused && !state.stopFlag) await sleep(250);
+  }
 
   var state = {
     user: null, uid: null, lang: 'hi',
@@ -426,9 +431,18 @@
       function finish() {
         if (done) return; done = true;
         clearTimeout(timer);
+        if (state.speechCtl) state.speechCtl = null;
         try { if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel(); } catch (_) {}
         resolve();
       }
+      /* 暫停時凍結看門狗，繼續時重設。 */
+      state.speechCtl = {
+        pause: function () { clearTimeout(timer); },
+        resume: function () {
+          clearTimeout(timer);
+          timer = setTimeout(finish, Math.min(180000, 8000 + Array.from(text || '').length * 800));
+        }
+      };
       /* 讓 stopPlayback 可以立刻叫醒這次等待，不用等看門狗。 */
       state.cancelWait = finish;
       try {
@@ -522,6 +536,7 @@
         if (done) return; done = true;
         if (timer) clearTimeout(timer);
         if (state.currentAudio === a) state.currentAudio = null;
+        if (state.audioCtl) state.audioCtl = null;
         if (objectUrl) { try { URL.revokeObjectURL(objectUrl); } catch (_) {} }
         logPlay({
           time: new Date().toLocaleTimeString('zh-TW', { hour12: false }),
@@ -540,6 +555,20 @@
         if (timer) clearTimeout(timer);
         timer = setTimeout(function () { try { a.pause(); } catch (_) {} finish('watchdog'); }, ms);
       }
+      /* 暫停時凍結看門狗（否則暫停幾秒後會被看門狗推進到下一句、自動播出），
+         繼續時按剩餘長度重設。 */
+      state.audioCtl = {
+        pause: function () { if (timer) { clearTimeout(timer); timer = null; } },
+        resume: function () {
+          var ms = 45000;
+          try {
+            if (a.duration && isFinite(a.duration) && a.duration > 0) {
+              ms = Math.max(8000, (a.duration - (a.currentTime || 0)) * 1000 + 10000);
+            }
+          } catch (_) {}
+          arm(Math.min(ms, 180000));
+        }
+      };
       arm(45000);
       try {
         a.onloadedmetadata = function () {
@@ -556,6 +585,8 @@
       try { a.src = src; } catch (_) {}
       /* iOS：等載入到可播狀態（canplay）再 play，否則前幾句會被靜默跳過。最多等 3 秒。 */
       function doPlay() {
+        /* 暫停中或已停止：不要播出；繼續時由 togglePause 接手播放。 */
+        if (state.paused || state.stopFlag) return;
         try {
           var pr = a.play();
           if (pr && pr.catch) pr.catch(function (err) {
@@ -594,13 +625,25 @@
   function togglePause() {
     if (!state.playing) return;
     if (state.paused) {
+      /* 繼續：恢復聲音＋重設看門狗 */
       state.paused = false;
-      if (state.currentAudio) { state.currentAudio.play().catch(function () {}); }
-      else { try { speechSynthesis.resume(); } catch (_) {} }
+      if (state.currentAudio) {
+        state.currentAudio.play().catch(function () {});
+        if (state.audioCtl) { try { state.audioCtl.resume(); } catch (_) {} }
+      } else {
+        try { speechSynthesis.resume(); } catch (_) {}
+        if (state.speechCtl) { try { state.speechCtl.resume(); } catch (_) {} }
+      }
     } else {
+      /* 暫停：停住聲音＋凍結看門狗（否則幾秒後看門狗會推進到下一句自動播出） */
       state.paused = true;
-      if (state.currentAudio) { state.currentAudio.pause(); }
-      else { try { speechSynthesis.pause(); } catch (_) {} }
+      if (state.currentAudio) {
+        try { state.currentAudio.pause(); } catch (_) {}
+        if (state.audioCtl) { try { state.audioCtl.pause(); } catch (_) {} }
+      } else {
+        try { speechSynthesis.pause(); } catch (_) {}
+        if (state.speechCtl) { try { state.speechCtl.pause(); } catch (_) {} }
+      }
     }
     setPausedUI();
   }
@@ -741,6 +784,8 @@
         var url = await azureForeign(text, locale);
         /* 查詢期間被按了停止：直接返回，不要播。 */
         if (state.stopFlag) return;
+        await waitIfPaused();
+        if (state.stopFlag) return;
         setAudioSource(state.lastAudioFrom || 'azure');
         await playUrl(url);
         return;
@@ -760,6 +805,7 @@
     } else if (!L.cloudVoice) {
       setAudioSource('browser');
     }
+    await waitIfPaused();
     await speakBrowser(text, locale, 0.85);
   }
 
@@ -784,6 +830,7 @@
       /* 只播外語（Azure）：學習者是懂中文的台灣老師，不需要聽中文。 */
       var L = langProfile();
       for (var i = 0; i < 3 && !state.stopFlag && token === state.playToken; i++) {
+        await waitIfPaused();
         await playForeign(n.foreign, L.locale);
         if (!state.stopFlag && token === state.playToken) await sleep(700);
       }
@@ -839,6 +886,7 @@
     /* 只播外語（Azure 3 遍），不播中文。 */
     var L = langProfile();
     for (var i = 0; i < 3 && !state.stopFlag && (token === undefined || token === state.playToken); i++) {
+      await waitIfPaused();
       await playForeign(n.foreign, L.locale);
       if (!state.stopFlag && (token === undefined || token === state.playToken)) await sleep(700);
     }
