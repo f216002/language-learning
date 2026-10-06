@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261006-01';
+  var LL_APP_VERSION = '20261006-02';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -346,7 +346,7 @@
       var n = findNote(btn.getAttribute('data-id'));
       if (!n) return;
       var act = btn.getAttribute('data-act');
-      if (act === 'play') playSentence(n, btn);
+      if (act === 'play') { warmUpAudio(); playSentence(n, btn); }
       else if (act === 'explain') explainNote(n, btn);
       else if (act === 'edit') openEditor(n);
       else if (act === 'del' && confirm('確定刪除這句？')) deleteNote(n);
@@ -458,6 +458,24 @@
     return sharedAudioEl;
   }
 
+  /* iOS 音訊暖機：必須在使用者手勢內「同步」執行一次，否則前幾句的 play() 會被靜默跳過。 */
+  var SILENT_WAV = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+  var audioWarmedUp = false;
+  function warmUpAudio() {
+    if (audioWarmedUp) return;
+    audioWarmedUp = true;
+    try {
+      var a = getAudioEl();
+      a.src = SILENT_WAV;
+      var pr = a.play();
+      if (pr && pr.then) {
+        pr.then(function () { try { a.pause(); } catch (_) {} }).catch(function () {});
+      } else {
+        try { a.pause(); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   /* 播放診斷：記錄最近 20 次播放，供設定頁顯示。 */
   function logPlay(entry) {
     try {
@@ -536,14 +554,36 @@
         finish('error');
       };
       try { a.src = src; } catch (_) {}
+      /* iOS：等載入到可播狀態（canplay）再 play，否則前幾句會被靜默跳過。最多等 3 秒。 */
+      function doPlay() {
+        try {
+          var pr = a.play();
+          if (pr && pr.catch) pr.catch(function (err) {
+            playErr = 'play()被拒:' + ((err && err.name) || (err && err.message) || err);
+            try { console.warn('audio play() rejected', err); } catch (_) {}
+            finish('play-rejected');
+          });
+        } catch (_) { finish('play-exception'); }
+      }
+      var canplayTimer = null, canplayDone = false;
+      function canplayCleanup() {
+        if (canplayTimer) clearTimeout(canplayTimer);
+        try { a.removeEventListener('canplay', onCanPlay); } catch (_) {}
+      }
+      function onCanPlay() {
+        if (canplayDone) return; canplayDone = true;
+        canplayCleanup(); doPlay();
+      }
       try {
-        var pr = a.play();
-        if (pr && pr.catch) pr.catch(function (err) {
-          playErr = 'play()被拒:' + ((err && err.name) || (err && err.message) || err);
-          try { console.warn('audio play() rejected', err); } catch (_) {}
-          finish('play-rejected');
-        });
-      } catch (_) { finish('play-exception'); }
+        if (a.readyState >= 3) { doPlay(); }
+        else {
+          a.addEventListener('canplay', onCanPlay);
+          canplayTimer = setTimeout(function () {
+            if (canplayDone) return; canplayDone = true;
+            canplayCleanup(); doPlay();
+          }, 3000);
+        }
+      } catch (_) { doPlay(); }
     });
   }
 
@@ -1167,7 +1207,7 @@
     $('topicSelectAll').addEventListener('change', function (e) { toggleSelectAllTopics(e.target.checked); });
     $('topicSaveBtn').addEventListener('click', saveTopicRename);
     $('searchInput').addEventListener('input', renderNotes);
-    $('playSelectedBtn').addEventListener('click', playSelected);
+    $('playSelectedBtn').addEventListener('click', function () { warmUpAudio(); playSelected(); });
     $('pauseBtn').addEventListener('click', togglePause);
     $('selectAllBox').addEventListener('change', function (e) { toggleSelectAllShown(e.target.checked); });
     $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
