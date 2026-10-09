@@ -27,7 +27,9 @@
     playQueue: [], playing: false, stopFlag: false, paused: false,
     currentAudio: null, currentNote: null, playToken: 0, cancelWait: null,
     audioCache: new Map(), synthFn: null, audioSource: '', lastAudioFrom: '',
-    playLog: []
+    playLog: [],
+    /* 2026-10-09 背景播放：連播清單＋鎖屏上下句跳轉狀態 */
+    playIds: null, currentIdx: null, skipRequest: null, skipArmed: false
   };
 
   function langProfile() { return LL_LANGS[state.lang] || LL_LANGS.hi; }
@@ -618,6 +620,50 @@
     });
   }
 
+  /* ---------- 背景播放：Media Session（鎖屏／系統媒體控制） ---------- */
+  /* 2026-10-09：讓連播走系統媒體通道——關屏繼續播，鎖屏顯示句子、可暫停／切上下句。 */
+  function setupMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler('play', function () { if (state.playing && state.paused) togglePause(); });
+      navigator.mediaSession.setActionHandler('pause', function () { if (state.playing && !state.paused) togglePause(); });
+      navigator.mediaSession.setActionHandler('previoustrack', function () { stepSentence(-1); });
+      navigator.mediaSession.setActionHandler('nexttrack', function () { stepSentence(1); });
+    } catch (_) {}
+  }
+  function updateMediaMetadata(n) {
+    if (!('mediaSession' in navigator) || !n) return;
+    try {
+      var L = langProfile();
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: String(n.foreign || n.zh || '').slice(0, 100),
+        artist: '語言學習 Language Learning',
+        album: (L.nameZh || L.name || '') + '句子庫'
+      });
+    } catch (_) {}
+    setMediaPlaybackState();
+  }
+  function setMediaPlaybackState() {
+    if (!('mediaSession' in navigator)) return;
+    try { navigator.mediaSession.playbackState = (!state.playing || state.paused) ? 'paused' : 'playing'; }
+    catch (_) {}
+  }
+  /* 鎖屏／媒體鍵的上下句：中斷目前這句，跳到清單中指定位置（僅連播模式）。 */
+  function stepSentence(dir) {
+    if (!state.playing || !state.playIds || !state.playIds.length) return;
+    var idx = (state.currentIdx == null ? 0 : state.currentIdx) + dir;
+    if (idx < 0) idx = 0;
+    if (idx >= state.playIds.length) idx = state.playIds.length - 1;
+    state.skipArmed = true;
+    state.skipRequest = idx;
+    /* 立刻叫醒目前的等待（播音／Azure 請求），不等看門狗超時。 */
+    var cancel = state.cancelWait;
+    state.cancelWait = null;
+    try { if (cancel) cancel(); } catch (_) {}
+    try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
+    try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch (_) {}
+  }
+
   /* ---------- 暫停／繼續（對齊舊站 ⏸ 暫停） ---------- */
   function setPausedUI() {
     $('pauseBtn').textContent = state.paused ? '▶ 繼續' : '⏸ 暫停';
@@ -646,16 +692,19 @@
       }
     }
     setPausedUI();
+    setMediaPlaybackState();
   }
   function beginPlaybackUI() {
     state.paused = false; setPausedUI();
     $('pauseBtn').disabled = false;
+    setMediaPlaybackState();
   }
   function endPlaybackUI() {
     state.paused = false; setPausedUI();
     $('pauseBtn').disabled = true;
     state.currentAudio = null;
     showNowPlaying(null);
+    setMediaPlaybackState();
   }
 
   /* ---------- 播放中顯示＋卡片高亮（對齊舊站） ---------- */
@@ -792,6 +841,8 @@
       } catch (err) {
         /* 使用者按了停止：不要改播瀏覽器語音，直接把停止信號往上拋，讓循環立刻結束。 */
         if (state.stopFlag) throw err;
+        /* 鎖屏上下句跳轉：往上拋，讓連播循環處理跳轉，不降級。 */
+        if (state.skipArmed) { err._llSkip = true; throw err; }
         var reason = (err && err.message) || String(err);
         console.warn('Azure failed, browser fallback', err);
         /* 失敗原因顯示出來，不再靜默降級。 */
@@ -809,15 +860,45 @@
     await speakBrowser(text, locale, 0.85);
   }
 
-  /* 每句先播一次中文（瀏覽器語音 zh-TW，不走 Azure），再播三次外語。 */
+  /* 2026-10-09：中文改走 Azure 預生成音檔（背景播放用），走 <audio> 媒體通道，
+     關屏不中斷。後端尚未部署中文語音、或額度用完時，自動降級瀏覽器語音。 */
+  async function playChineseAzure(text) {
+    var tooLong = !llIsAdmin() && Array.from(text || '').length > LL_MAX_AZURE_CHARS;
+    if (tooLong) return false;
+    try {
+      var url = await azureForeign(text, 'zh-TW');
+      /* 查詢期間被按了停止：直接返回，不要播。 */
+      if (state.stopFlag) return true;
+      await waitIfPaused();
+      if (state.stopFlag) return true;
+      setAudioSource(state.lastAudioFrom || 'azure');
+      await playUrl(url);
+      return true;
+    } catch (err) {
+      /* 使用者按了停止：不要改播瀏覽器語音，直接把停止信號往上拋，讓循環立刻結束。 */
+      if (state.stopFlag) throw err;
+      /* 鎖屏上下句跳轉：往上拋，讓連播循環處理跳轉，不降級。 */
+      if (state.skipArmed) { err._llSkip = true; throw err; }
+      var reason = (err && err.message) || String(err);
+      console.warn('Chinese Azure failed, browser fallback', err);
+      /* 失敗原因顯示出來，不再靜默降級。 */
+      setAudioSource('browser', reason);
+      return false;
+    }
+  }
+
+  /* 每句先播一次中文（Azure 預生成音檔；失敗時降級瀏覽器語音 zh-TW），再播三次外語。 */
   async function playChineseOnce(n, token) {
     if (!n.zh || state.stopFlag) return;
     if (token !== undefined && token !== state.playToken) return;
     await waitIfPaused();
     if (state.stopFlag) return;
     if (token !== undefined && token !== state.playToken) return;
-    setAudioSource('browser');
-    await speakBrowser(n.zh, 'zh-TW', 0.9);
+    var azureOk = await playChineseAzure(n.zh);
+    if (!azureOk && !state.stopFlag && (token === undefined || token === state.playToken)) {
+      setAudioSource('browser');
+      await speakBrowser(n.zh, 'zh-TW', 0.9);
+    }
     if (!state.stopFlag && (token === undefined || token === state.playToken)) await sleep(500);
   }
 
@@ -858,6 +939,7 @@
   function stopPlayback() {
     state.playToken++;
     state.stopFlag = true;
+    state.skipRequest = null; state.skipArmed = false;
     /* 立刻叫醒目前卡住的等待（播音／Azure 請求），不等看門狗超時。 */
     var cancel = state.cancelWait;
     state.cancelWait = null;
@@ -865,6 +947,7 @@
     state.paused = false; setPausedUI();
     try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
     try { speechSynthesis.cancel(); } catch (_) {}
+    setMediaPlaybackState();
   }
 
   async function playSelected() {
@@ -874,19 +957,37 @@
     if (!ids.length) { alert('請先勾選句子。'); return; }
     if (state.playing) { stopPlayback(); return; }
     state.playing = true; state.stopFlag = false;
+    state.playIds = ids; state.currentIdx = 0; state.skipRequest = null; state.skipArmed = false;
     var token = ++state.playToken;
     beginPlaybackUI();
     $('playSelectedBtn').textContent = '⏹ 停止';
     var loop = $('loopCheck').checked;
     try {
       do {
-        for (var i = 0; i < ids.length && !state.stopFlag && token === state.playToken; i++) {
-          var n = findNote(ids[i]);
-          if (n) await playSentenceInner(n, token);
+        var idx = 0;
+        /* 2026-10-09：while 循環＋skipRequest，讓鎖屏上下句可以中途跳轉。 */
+        while (idx < ids.length && !state.stopFlag && token === state.playToken) {
+          if (state.skipRequest != null) {
+            idx = state.skipRequest;
+            state.skipRequest = null; state.skipArmed = false;
+            if (idx < 0) idx = 0;
+            if (idx >= ids.length) break;
+          }
+          state.currentIdx = idx;
+          var n = findNote(ids[idx]);
+          try {
+            if (n) await playSentenceInner(n, token);
+          } catch (err) {
+            /* 鎖屏跳轉中斷：回到循環頂部處理 skipRequest。 */
+            if (err && err._llSkip) continue;
+            throw err;
+          }
+          idx++;
         }
       } while (loop && !state.stopFlag && token === state.playToken);
     } finally {
       state.playing = false;
+      state.playIds = null; state.currentIdx = null; state.skipRequest = null; state.skipArmed = false;
       $('playSelectedBtn').textContent = '▶ 播放勾選';
       $('playState').textContent = '';
       endPlaybackUI();
@@ -896,6 +997,7 @@
   async function playSentenceInner(n, token) {
     $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
+    updateMediaMetadata(n);
     /* 每句先播一次中文，再播三次外語。 */
     var L = langProfile();
     await playChineseOnce(n, token);
@@ -1271,6 +1373,7 @@
     $('searchInput').addEventListener('input', renderNotes);
     $('playSelectedBtn').addEventListener('click', function () { warmUpAudio(); playSelected(); });
     $('pauseBtn').addEventListener('click', togglePause);
+    setupMediaSession();
     $('selectAllBox').addEventListener('change', function (e) { toggleSelectAllShown(e.target.checked); });
     $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
     $('addNoteBtn').addEventListener('click', function () { openEditor(null); });
