@@ -123,7 +123,7 @@
     renderNotes();
   }
 
-  /* 主題多選（對齊舊站）：下拉式勾選清單，含「全選全部主題」，再按一次全取消。 */
+  /* 主題多選（對齊舊站）：下拉式勾選清單，含「全選」，再按一次全取消。 */
   var selectedTopicKeys = [];
   var prevTopicKeys = [];
   function topicKey(t) { return (t.id || '') + '‖' + (t.name || ''); }
@@ -297,7 +297,7 @@
     if (!list.length) {
       var emptyMsg;
       if (!state.notes.length) emptyMsg = '還沒有句子。去「學新句」用 AI 整理第一批，或到「設定」匯入舊站資料。';
-      else if (!selectedTopicKeys.length) emptyMsg = '請先從上方選擇主題（可複選，或勾選「全選全部主題」）。';
+      else if (!selectedTopicKeys.length) emptyMsg = '請先從上方選擇主題（可複選，或勾選「全選」）。';
       else emptyMsg = '沒有符合的句子，請調整主題選擇或搜尋關鍵字。';
       div.innerHTML = '<div class="empty">' + emptyMsg + '</div>';
       updateSelectCount();
