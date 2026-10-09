@@ -1376,7 +1376,6 @@
     setupMediaSession();
     $('selectAllBox').addEventListener('change', function (e) { toggleSelectAllShown(e.target.checked); });
     $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
-    $('addNoteBtn').addEventListener('click', function () { openEditor(null); });
     $('saveEditBtn').addEventListener('click', saveEditor);
     $('copyLearnBtn').addEventListener('click', copyLearn);
     $('openLearnChatGPT').addEventListener('click', function () { copyAndOpenLearn('https://chatgpt.com/'); });
