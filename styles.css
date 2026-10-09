@@ -79,6 +79,7 @@ dialog label input{margin-top:4px}
 .topic-rename,.topic-del{border:0;background:none;font-size:.95rem;cursor:pointer;padding:4px 6px;opacity:.55}
 .topic-rename:hover,.topic-del:hover{opacity:1}
 .topic-all{background:#f8fafc}
+.topic-all input{width:18px;height:18px;accent-color:var(--accent);flex-shrink:0}
 .topic-divider{height:1px;background:var(--line);margin:4px 0}
 /* ---- 全選列 ---- */
 .select-all-row{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.92rem;padding:2px 12px 8px}
