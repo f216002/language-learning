@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261006-04';
+  var LL_APP_VERSION = '20261014-01';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -470,8 +470,76 @@
     if (!sharedAudioEl) {
       sharedAudioEl = new Audio();
       try { sharedAudioEl.preload = 'auto'; } catch (_) {}
+      setupVolumeGraph(sharedAudioEl);
     }
     return sharedAudioEl;
+  }
+
+  /* 音量平衡（比照 V4）：元素 → 增益（每句響度校正）→ 動態壓縮器 → 喇叭。
+     Azure 各語音原始音量不一致，先量每句 RMS 拉齊增益，再用壓縮器壓平忽大忽小。 */
+  var audioCtx = null, playGainNode = null;
+  function setupVolumeGraph(el) {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = new AC();
+      var srcNode = audioCtx.createMediaElementSource(el);
+      playGainNode = audioCtx.createGain();
+      playGainNode.gain.value = 1;
+      var comp = audioCtx.createDynamicsCompressor();
+      comp.threshold.value = -18;
+      comp.knee.value = 12;
+      comp.ratio.value = 4;
+      comp.attack.value = 0.003;
+      comp.release.value = 0.25;
+      srcNode.connect(playGainNode);
+      playGainNode.connect(comp);
+      comp.connect(audioCtx.destination);
+    } catch (e) {
+      audioCtx = null; playGainNode = null;
+    }
+  }
+  function resumeAudioCtx() {
+    try {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        var p = audioCtx.resume();
+        if (p && p.catch) p.catch(function () {});
+      }
+    } catch (_) {}
+  }
+
+  /* 每句響度增益（解碼量 RMS，目標 0.16，結果快取；量不到就用 1）。 */
+  var loudGainCache = new Map();
+  async function applyLoudnessGain(url, key) {
+    try {
+      if (!playGainNode || !audioCtx || !key) return;
+      if (loudGainCache.has(key)) {
+        playGainNode.gain.value = loudGainCache.get(key);
+        return;
+      }
+      playGainNode.gain.value = 1;
+      var dm = /^data:([^;,]+);base64,([\s\S]*)$/.exec(url || '');
+      if (!dm) { loudGainCache.set(key, 1); return; }
+      var b64 = dm[2].replace(/\s+/g, '');
+      var bin = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var buf = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
+      var ch = buf.getChannelData(0);
+      var sum = 0, cnt = 0;
+      for (var j = 0; j < ch.length; j += 10) { sum += ch[j] * ch[j]; cnt++; }
+      var rms = Math.sqrt(sum / Math.max(1, cnt));
+      var gain = 1;
+      if (rms > 0.005) {
+        gain = 0.16 / rms;
+        if (gain > 3.5) gain = 3.5;
+        if (gain < 0.4) gain = 0.4;
+      }
+      loudGainCache.set(key, gain);
+      playGainNode.gain.value = gain;
+    } catch (_) {
+      try { if (playGainNode) playGainNode.gain.value = 1; } catch (__) {}
+    }
   }
 
   /* iOS 音訊暖機：必須在使用者手勢內「同步」執行一次，否則前幾句的 play() 會被靜默跳過。 */
@@ -482,6 +550,7 @@
     audioWarmedUp = true;
     try {
       var a = getAudioEl();
+      resumeAudioCtx();
       a.src = SILENT_WAV;
       var pr = a.play();
       if (pr && pr.then) {
@@ -509,7 +578,10 @@
     }).join('\n');
   }
 
-  function playUrl(url) {
+  async function playUrl(url, key) {
+    /* 音量平衡：播之前先把這句的增益調到與其他句一致。 */
+    await applyLoudnessGain(url, key);
+    resumeAudioCtx();
     return new Promise(function (resolve) {
       var t0 = Date.now();
       var noteText = (state.currentNote && (state.currentNote.foreign || '')) || '';
@@ -836,7 +908,7 @@
         await waitIfPaused();
         if (state.stopFlag) return;
         setAudioSource(state.lastAudioFrom || 'azure');
-        await playUrl(url);
+        await playUrl(url, audioCacheKey(locale, text));
         return;
       } catch (err) {
         /* 使用者按了停止：不要改播瀏覽器語音，直接把停止信號往上拋，讓循環立刻結束。 */
@@ -872,7 +944,7 @@
       await waitIfPaused();
       if (state.stopFlag) return true;
       setAudioSource(state.lastAudioFrom || 'azure');
-      await playUrl(url);
+      await playUrl(url, audioCacheKey('zh-TW', text));
       return true;
     } catch (err) {
       /* 使用者按了停止：不要改播瀏覽器語音，直接把停止信號往上拋，讓循環立刻結束。 */
@@ -1388,7 +1460,7 @@
     $('langSelect').addEventListener('change', function (e) { setLang(e.target.value); });
     var langSelectTop = $('langSelectTop');
     if (langSelectTop) langSelectTop.addEventListener('change', function (e) { setLang(e.target.value); });
-    $('testVoiceBtn').addEventListener('click', testVoice);
+    $('testVoiceBtn').addEventListener('click', function () { warmUpAudio(); testVoice(); });
     $('importLegacyBtn').addEventListener('click', importLegacy);
     $('dedupeBtn').addEventListener('click', dedupeNotes);
     $('exportBtn').addEventListener('click', exportBackup);
