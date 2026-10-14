@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261014-01';
+  var LL_APP_VERSION = '20261014-02';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -319,8 +319,6 @@
         '</div>' +
         '<div class="note-actions">' +
           '<button type="button" data-act="play" data-id="' + n._id + '" title="播放">▶</button>' +
-          /* ✨ 解釋僅印地文：播放條已移除，改由卡片觸發（沿用舊站 Gemini 服務）。 */
-          (state.lang === 'hi' ? '<button type="button" data-act="explain" data-id="' + n._id + '" title="AI 解釋">✨</button>' : '') +
           '<button type="button" data-act="edit" data-id="' + n._id + '" title="編輯">✏️</button>' +
           '<button type="button" data-act="del" data-id="' + n._id + '" title="刪除">🗑</button>' +
         '</div>';
@@ -354,7 +352,6 @@
       if (!n) return;
       var act = btn.getAttribute('data-act');
       if (act === 'play') { warmUpAudio(); playSentence(n, btn); }
-      else if (act === 'explain') explainNote(n, btn);
       else if (act === 'edit') openEditor(n);
       else if (act === 'del' && confirm('確定刪除這句？')) deleteNote(n);
       return;
@@ -1080,56 +1077,6 @@
     }
   }
 
-  /* ---------- ✨ 解釋（移植舊站 Gemini 面板，僅印地文；觸發鈕在各卡片上，播放條不再佔位） ---------- */
-  var GEMINI_WEB_APP = 'https://script.google.com/macros/s/AKfycbwJSRywJnRF-H7B8imfFNzGAL-Af32AEOuMZUMgAUKc7zg1Yox4NedVWz1IeljRKc7jiQ/exec';
-
-  function explainNote(n, btn) {
-    if (!n || !n.foreign) { alert('找不到這句的內容。'); return; }
-    $('geminiOriginalHindi').textContent = n.foreign || '';
-    $('geminiOriginalRoman').textContent = n.roman || '';
-    $('geminiOriginalZh').textContent = n.zh || '';
-    $('geminiPanel').style.display = 'block';
-    var statusBox = $('geminiStatus'), resultBox = $('geminiResult');
-    statusBox.style.display = 'block';
-    statusBox.textContent = '⏳ 正在連線 Gemini AI，請稍候……';
-    resultBox.textContent = '';
-    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
-    var callbackName = 'geminiCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
-    var script = document.createElement('script');
-    var completed = false, timeoutId = null;
-    function cleanup() {
-      if (script.parentNode) script.parentNode.removeChild(script);
-      try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
-      if (timeoutId) clearTimeout(timeoutId);
-      if (btn) { btn.textContent = '✨'; btn.disabled = false; }
-    }
-    window[callbackName] = function (result) {
-      if (completed) return; completed = true;
-      if (!result || !result.ok) {
-        statusBox.textContent = '❌ ' + ((result && result.error) || 'Gemini 沒有回傳資料。');
-      } else {
-        statusBox.style.display = 'none';
-        resultBox.textContent = result.text || 'Gemini 沒有回傳解釋內容。';
-      }
-      cleanup();
-    };
-    script.onerror = function () {
-      if (completed) return; completed = true;
-      statusBox.textContent = '❌ 無法連線解釋服務。';
-      cleanup();
-    };
-    script.src = GEMINI_WEB_APP + '?callback=' + encodeURIComponent(callbackName) +
-      '&hindi=' + encodeURIComponent(n.foreign || '') +
-      '&zh=' + encodeURIComponent(n.zh || '');
-    script.async = true;
-    document.body.appendChild(script);
-    timeoutId = setTimeout(function () {
-      if (completed) return; completed = true;
-      statusBox.textContent = '❌ 等待超過 90 秒，後端沒有回傳。';
-      cleanup();
-    }, 90000);
-  }
-
   /* ---------- 學新句：提示辭工作流 ---------- */
   function currentLearnPrompt() { return llBuildLearnPrompt(state.lang); }
   function currentOrganizePrompt() { return llBuildOrganizePrompt(state.lang); }
@@ -1447,7 +1394,6 @@
     $('pauseBtn').addEventListener('click', togglePause);
     setupMediaSession();
     $('selectAllBox').addEventListener('change', function (e) { toggleSelectAllShown(e.target.checked); });
-    $('geminiBackBtn').addEventListener('click', function () { $('geminiPanel').style.display = 'none'; });
     $('saveEditBtn').addEventListener('click', saveEditor);
     $('copyLearnBtn').addEventListener('click', copyLearn);
     $('openLearnChatGPT').addEventListener('click', function () { copyAndOpenLearn('https://chatgpt.com/'); });
