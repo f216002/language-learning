@@ -475,7 +475,16 @@
   /* 音量平衡（比照 V4）：元素 → 增益（每句響度校正）→ 動態壓縮器 → 喇叭。
      Azure 各語音原始音量不一致，先量每句 RMS 拉齊增益，再用壓縮器壓平忽大忽小。 */
   var audioCtx = null, playGainNode = null;
+  /* 手機不走 Web Audio 圖（2026-10-17）：<audio> 一旦被 createMediaElementSource
+     接進 AudioContext，輸出就歸 Web Audio 管；iOS／Android 在鎖屏時會強制
+     suspend／interrupt AudioContext，聲音直接停掉——這正是「進螢幕保護就自動
+     暫停」的病根。手機改讓 <audio> 走原生媒體通道（可背景／鎖屏續播、走
+     Media Session 鎖屏控制），代價是手機上沒有響度校正；桌面不受鎖屏
+     suspend 影響，維持圖形路徑與音量平衡。 */
+  var LL_MOBILE_AUDIO = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '') ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   function setupVolumeGraph(el) {
+    if (LL_MOBILE_AUDIO) return;
     try {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
@@ -732,6 +741,23 @@
     try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
     try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch (_) {}
   }
+
+  /* 回到前景時自我修復（2026-10-17）：若 OS 在背景期間把音檔元素暫停了
+     （來電、系統中斷等），而播放狀態仍是「播放中、未按暫停」，回到前景
+     自動接著播，並重設看門狗；使用者自己按的暫停（state.paused）不碰。 */
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    try {
+      resumeAudioCtx();
+      if (!state.playing || state.paused || state.stopFlag) return;
+      var a = state.currentAudio;
+      if (a && a.paused && a.currentTime > 0 && a.duration && a.currentTime < a.duration) {
+        var pr = a.play();
+        if (pr && pr.catch) pr.catch(function () {});
+        if (state.audioCtl) { try { state.audioCtl.resume(); } catch (_) {} }
+      }
+    } catch (_) {}
+  });
 
   /* ---------- 暫停／繼續（對齊舊站 ⏸ 暫停） ---------- */
   function setPausedUI() {
