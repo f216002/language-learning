@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261018-02';
+  var LL_APP_VERSION = '20261018-03';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -470,7 +470,9 @@
       /* 不接 Web Audio 音量圖（2026-10-18 移除）：10/9 實機驗證可用的版本
          沒有這張圖；10/14 加入音量平衡後，鎖屏／螢幕保護時 AudioContext
          被系統暫停就開始出現「播到一半自動暫停」。恢復 10/9 的純 <audio>
-         原生通道（手機、桌面皆同），setupVolumeGraph 從此不再被呼叫。 */
+         原生通道（手機、桌面皆同），setupVolumeGraph 從此不再被呼叫。
+         音量拉齊改在抓檔時一次性寫進音檔本身（normalizeDataUrl），
+         播放路徑不變，音量與鎖屏續播不再衝突。 */
     }
     return sharedAudioEl;
   }
@@ -900,7 +902,7 @@
     var key = audioCacheKey(locale, text);
     if (state.audioCache.has(key)) { state.lastAudioFrom = 'idbcache'; return state.audioCache.get(key); }
     var local = await idbGet(key);
-    if (local) { state.audioCache.set(key, local); state.lastAudioFrom = 'idbcache'; return local; }
+    if (local) { var localFinal = await normalizeDataUrl(local, key); state.audioCache.set(key, localFinal); state.lastAudioFrom = 'idbcache'; return localFinal; }
     if (!state.synthFn) {
       state.synthFn = window.firebase.app().functions('us-east1').httpsCallable('synthesizeV4Source', { timeout: 60000 });
     }
@@ -917,10 +919,105 @@
     var data = (res && res.data) || {};
     if (!data.audioBase64) throw new Error('empty audio');
     var url = 'data:' + (data.contentType || 'audio/mpeg') + ';base64,' + data.audioBase64;
-    state.audioCache.set(key, url);
     idbPut(key, url);
+    var finalUrl = await normalizeDataUrl(url, key);
+    state.audioCache.set(key, finalUrl);
     state.lastAudioFrom = data.cached ? 'cloud-cache' : 'azure';
-    return url;
+    return finalUrl;
+  }
+
+  /* ---------- 音量拉齊（寫進音檔本身，2026-10-18） ----------
+     與鎖屏續播衝突的不是「音量拉齊」，是 10/14 那種把播放元素接進
+     Web Audio 圖的即時做法（鎖屏時 AudioContext 被系統暫停）。
+     這裡改成：抓到音檔時一次性解碼、量測 RMS 與峰值、套用增益後
+     重新存成音檔（處理結果快取於 IndexedDB 的 key+'\ng2' 與記憶體），
+     播放時元素只播這份已調好的音檔，路徑與 10/9 驗證版完全相同。
+     iOS 的 <audio>.volume 屬性會被系統忽略，故不採用；
+     增益公式：目標 RMS 0.15，增益上限受峰值 0.95 天花板與 [0.3, 2.5] 夾限，
+     增益接近 1（±5%）時直接用原檔，不浪費空間與時間。
+     任何一步失敗都退回原檔，絕不因音量處理讓句子播不出來。 */
+  var normCache = new Map();
+  function encodeWavMono(samples, sampleRate) {
+    var buf = new ArrayBuffer(44 + samples.length * 2);
+    var v = new DataView(buf);
+    function wstr(off, s) { for (var i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); }
+    wstr(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); wstr(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    wstr(36, 'data'); v.setUint32(40, samples.length * 2, true);
+    for (var i = 0; i < samples.length; i++) {
+      var s = Math.max(-1, Math.min(1, samples[i]));
+      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(r.result); };
+      r.onerror = function () { reject(r.error || new Error('FileReader 失敗')); };
+      r.readAsDataURL(blob);
+    });
+  }
+  async function normalizeDataUrl(dataUrl, key) {
+    try {
+      if (!key) return dataUrl;
+      if (normCache.has(key)) return normCache.get(key);
+      var pkey = key + '\ng2';
+      var stored = await idbGet(pkey);
+      if (stored) { normCache.set(key, stored); return stored; }
+      var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      var dm = /^data:([^;,]+);base64,([\s\S]*)$/.exec(dataUrl || '');
+      if (!OC || !dm) { normCache.set(key, dataUrl); return dataUrl; }
+      var b64 = dm[2].replace(/\s+/g, '');
+      var bin = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var bi = 0; bi < bin.length; bi++) bytes[bi] = bin.charCodeAt(bi);
+      var dctx = new OC(1, 1024, 24000);
+      var audioBuf = await new Promise(function (res2, rej2) {
+        var p = null;
+        try { p = dctx.decodeAudioData(bytes.buffer.slice(0), res2, rej2); } catch (e) { rej2(e); return; }
+        if (p && p.catch) p.catch(rej2);
+      });
+      var len = audioBuf.length, chs = audioBuf.numberOfChannels;
+      if (!len || !chs) { normCache.set(key, dataUrl); return dataUrl; }
+      var chans = [];
+      for (var c = 0; c < chs; c++) chans.push(audioBuf.getChannelData(c));
+      var sum = 0, peak = 0;
+      for (var i = 0; i < len; i++) {
+        var m = 0;
+        for (var c2 = 0; c2 < chs; c2++) m += chans[c2][i];
+        m /= chs;
+        sum += m * m;
+        var am = Math.abs(m);
+        if (am > peak) peak = am;
+      }
+      var rms = Math.sqrt(sum / len);
+      if (!(rms > 0.005) || !(peak > 0)) { normCache.set(key, dataUrl); return dataUrl; }
+      var gain = 0.15 / rms;
+      if (gain * peak > 0.95) gain = 0.95 / peak;
+      if (gain > 2.5) gain = 2.5;
+      if (gain < 0.3) gain = 0.3;
+      if (gain >= 0.95 && gain <= 1.05) { normCache.set(key, dataUrl); return dataUrl; }
+      var rctx = new OC(1, len, audioBuf.sampleRate);
+      var srcNode = rctx.createBufferSource();
+      srcNode.buffer = audioBuf;
+      var gNode = rctx.createGain();
+      gNode.gain.value = gain;
+      srcNode.connect(gNode);
+      gNode.connect(rctx.destination);
+      srcNode.start(0);
+      var rendered = await rctx.startRendering();
+      var wavBlob = encodeWavMono(rendered.getChannelData(0), rendered.sampleRate);
+      var finalUrl = await blobToDataUrl(wavBlob);
+      normCache.set(key, finalUrl);
+      idbPut(pkey, finalUrl);
+      return finalUrl;
+    } catch (e) {
+      try { console.warn('音量處理失敗，改用原音檔', e); } catch (_) {}
+      return dataUrl;
+    }
   }
 
   async function playForeign(text, locale) {
