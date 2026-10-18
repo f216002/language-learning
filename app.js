@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261018-01';
+  var LL_APP_VERSION = '20261018-02';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -29,9 +29,7 @@
     audioCache: new Map(), synthFn: null, audioSource: '', lastAudioFrom: '',
     playLog: [],
     /* 2026-10-09 背景播放：連播清單＋鎖屏上下句跳轉狀態 */
-    playIds: null, currentIdx: null, skipRequest: null, skipArmed: false,
-    /* 2026-10-18 鎖屏接力引擎：預先建好的片段隊列（見 playUrl 後的引擎段） */
-    q: null
+    playIds: null, currentIdx: null, skipRequest: null, skipArmed: false
   };
 
   function langProfile() { return LL_LANGS[state.lang] || LL_LANGS.hi; }
@@ -469,7 +467,10 @@
     if (!sharedAudioEl) {
       sharedAudioEl = new Audio();
       try { sharedAudioEl.preload = 'auto'; } catch (_) {}
-      setupVolumeGraph(sharedAudioEl);
+      /* 不接 Web Audio 音量圖（2026-10-18 移除）：10/9 實機驗證可用的版本
+         沒有這張圖；10/14 加入音量平衡後，鎖屏／螢幕保護時 AudioContext
+         被系統暫停就開始出現「播到一半自動暫停」。恢復 10/9 的純 <audio>
+         原生通道（手機、桌面皆同），setupVolumeGraph 從此不再被呼叫。 */
     }
     return sharedAudioEl;
   }
@@ -485,6 +486,7 @@
      suspend 影響，維持圖形路徑與音量平衡。 */
   var LL_MOBILE_AUDIO = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '') ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  /* 已停用（2026-10-18）：保留供對照，getAudioEl 不再呼叫本函式。 */
   function setupVolumeGraph(el) {
     if (LL_MOBILE_AUDIO) return;
     try {
@@ -587,9 +589,8 @@
   }
 
   async function playUrl(url, key) {
-    /* 音量平衡：播之前先把這句的增益調到與其他句一致。 */
-    await applyLoudnessGain(url, key);
-    resumeAudioCtx();
+    /* 2026-10-18：音量圖已移除，不再做響度增益（key 僅供呼叫端相容）。
+       直接走 <audio> 原生通道，與 10/9 驗證可用的版本相同。 */
     return new Promise(function (resolve) {
       var t0 = Date.now();
       var noteText = (state.currentNote && (state.currentNote.foreign || '')) || '';
@@ -700,221 +701,6 @@
     });
   }
 
-  /* ---------- 鎖屏接力引擎（2026-10-18，第三輪修法） ----------
-     前兩輪仍會停的真因：舊流程在每段音檔之間都要靠 JS 醒來做事——
-     sleep(500/700) 計時空檔、逐句向 Azure 抓音檔（網路）、data: 轉
-     Blob、等 canplay 再呼叫 play()。iOS 一鎖屏就暫停 JS 計時與背景
-     網路；而兩段之間的「靜默空檔」會讓系統判定頁面閒置、整頁凍結，
-     接力棒交不出去，聽起來就是「螢幕一關就暫停」。
-     本輪改法：按下播放時（螢幕還開著）先把整份清單的音檔全部抓好、
-     全部轉成 Blob URL，排成一條片段隊列；句與句、次與次之間的停頓
-     改用真正的「靜音音檔片段」，讓聲音從頭到尾不中斷。播放時每段
-     結束就在 ended 事件裡「同步」換下一段並 play()——整條接力路徑
-     沒有 setTimeout、沒有 await、沒有網路。iOS 對正在播放中的
-     <audio> 元件會在背景送出 ended 並允許同一元件接著播，這是網頁
-     播放清單在 iOS 鎖屏續播的標準作法。瀏覽器語音（Azure 失敗才
-     降級）仍受 iOS 系統限制：鎖屏中遇到該句會自動跳過，解鎖回前景
-     後照常，不讓整條隊列凍死在那一句。 */
-  var LL_STOP = { llStop: true };
-
-  /* 產生指定秒數的靜音 WAV（Blob URL，全域快取）：取代 sleep() 空檔，
-     讓播放永遠是「正在播音」狀態，系統不會判定閒置。 */
-  var silenceUrlCache = {};
-  function silenceUrl(seconds) {
-    var key = String(seconds);
-    if (silenceUrlCache[key]) return silenceUrlCache[key];
-    var rate = 22050, frames = Math.max(1, Math.round(rate * seconds));
-    var buf = new ArrayBuffer(44 + frames * 2);
-    var v = new DataView(buf);
-    function wstr(off, s) { for (var i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); }
-    wstr(0, 'RIFF'); v.setUint32(4, 36 + frames * 2, true); wstr(8, 'WAVEfmt ');
-    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
-    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-    wstr(36, 'data'); v.setUint32(40, frames * 2, true);
-    var url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
-    silenceUrlCache[key] = url;
-    return url;
-  }
-
-  /* data: 音檔轉 Blob URL（播放途中不再做這個轉換，全部在準備階段完成）。 */
-  function dataUrlToBlobUrl(dataUrl) {
-    var dm = /^data:([^;,]+);base64,([\s\S]*)$/.exec(dataUrl || '');
-    if (!dm) return null;
-    var b64 = dm[2].replace(/\s+/g, '');
-    var bin = atob(b64);
-    var bytes = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return URL.createObjectURL(new Blob([bytes], { type: dm[1] || 'audio/mpeg' }));
-  }
-
-  /* 桌面音量平衡：準備階段先把每句增益量好放進快取，接力時同步套用。 */
-  function setGainFromCache(key) {
-    try {
-      if (!playGainNode) return;
-      if (key && loudGainCache.has(key)) playGainNode.gain.value = loudGainCache.get(key);
-      else playGainNode.gain.value = 1;
-    } catch (_) {}
-  }
-
-  /* 準備單一片段：向 Azure 抓音檔（或命中快取）→ 轉 Blob URL。
-     只在「準備階段」呼叫；播放途中不碰網路。失敗時 throw，由呼叫端降級。 */
-  async function prepAudioClip(text, locale) {
-    var url = await azureForeign(text, locale);
-    var from = state.lastAudioFrom || 'azure';
-    var key = audioCacheKey(locale, text);
-    if (!LL_MOBILE_AUDIO) { try { await applyLoudnessGain(url, key); } catch (_) {} }
-    var blob = null;
-    try { blob = dataUrlToBlobUrl(url); } catch (_) { blob = null; }
-    return { src: blob || url, blobUrl: blob, key: key, from: from };
-  }
-
-  /* 把一整句建成片段清單：中文 1 次＋靜音 0.5s＋外語 3 次（次間靜音 0.7s）。
-     某段拿不到雲端音檔（或超過字數上限／該語言不走雲端）就降級成 tts 片段。 */
-  async function buildSentenceItems(n, token) {
-    var L = langProfile();
-    var items = [], runBlobUrls = [], sentenceTts = false;
-    function guard() { if (state.stopFlag || token !== state.playToken) throw LL_STOP; }
-    function pushSilence(sec) {
-      items.push({ kind: 'audio', silence: true, src: silenceUrl(sec), key: null, from: 'azure' });
-    }
-    async function addClip(text, locale, rate, count, tryCloud) {
-      var clip = null, isTts = false;
-      var tooLong = !llIsAdmin() && Array.from(text || '').length > LL_MAX_AZURE_CHARS;
-      if (tryCloud && !tooLong) {
-        try { clip = await prepAudioClip(text, locale); }
-        catch (e) { guard(); isTts = true; }
-      } else isTts = true;
-      guard();
-      if (isTts) sentenceTts = true;
-      if (clip && clip.blobUrl) runBlobUrls.push(clip.blobUrl);
-      for (var i = 0; i < count; i++) {
-        if (i > 0) pushSilence(0.7);
-        if (isTts) items.push({ kind: 'tts', text: text, locale: locale, rate: rate });
-        else items.push({ kind: 'audio', src: clip.src, key: clip.key, from: clip.from });
-      }
-    }
-    if (n.zh) await addClip(n.zh, 'zh-TW', 0.9, 1, true);
-    if (n.foreign) {
-      if (n.zh) pushSilence(0.5);
-      await addClip(n.foreign, L.locale, 0.85, 3, !!L.cloudVoice);
-    }
-    if (items.length) { items[0].sentenceStart = true; items[0].note = n; }
-    return { items: items, tts: sentenceTts ? 1 : 0, runBlobUrls: runBlobUrls };
-  }
-
-  function qClearWatchdog() {
-    var q = state.q;
-    if (q && q.watchdog) { clearTimeout(q.watchdog); q.watchdog = null; }
-  }
-
-  /* 接力看門狗（保底，不參與正常接力）：ended 萬一沒送達時，
-     還在播就重設、被系統中斷就試著接回、真的結束了就推進下一段。 */
-  function qArmWatchdog(item) {
-    qClearWatchdog();
-    var q = state.q;
-    if (!q) return;
-    var ms = (item && item.silence) ? 20000 : 90000;
-    q.watchdog = setTimeout(function () {
-      if (state.q !== q || state.paused || state.stopFlag) return;
-      var a = state.currentAudio;
-      if (a && !a.paused && !a.ended) { qArmWatchdog(item); return; }
-      if (a && a.paused && a.currentTime > 0 && a.duration && a.currentTime < a.duration - 0.3) {
-        var pr = a.play(); if (pr && pr.catch) pr.catch(function () {});
-        qArmWatchdog(item);
-        return;
-      }
-      qAdvance();
-    }, ms);
-  }
-
-  function resetPlayUI() {
-    state.playing = false;
-    try { $('playSelectedBtn').textContent = '▶ 播放勾選'; } catch (_) {}
-    try { $('playState').textContent = ''; } catch (_) {}
-    endPlaybackUI();
-  }
-
-  function qTeardown(resetUi) {
-    var q = state.q;
-    if (q) {
-      qClearWatchdog();
-      q.epoch++;
-      (q.runBlobUrls || []).forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
-      if (q.btn) { try { q.btn.classList.remove('playing'); } catch (_) {} }
-      state.q = null;
-    }
-    if (resetUi) resetPlayUI();
-  }
-
-  function qAdvance() {
-    var q = state.q;
-    if (!q) return;
-    qClearWatchdog();
-    q.idx++;
-    if (q.idx >= q.items.length) {
-      if (q.loop) { q.idx = 0; qPlayCurrent(); return; }
-      qTeardown(true);
-      return;
-    }
-    qPlayCurrent();
-  }
-
-  function qPlayTts(q, item) {
-    /* 鎖屏中：iOS 不允許瀏覽器語音在背景出聲，跳過這段，免得整條隊列凍結。 */
-    if (document.hidden) { qAdvance(); return; }
-    var epoch = q.epoch;
-    speakBrowser(item.text, item.locale, item.rate).then(function () {
-      if (state.q !== q || q.epoch !== epoch || state.stopFlag) return;
-      qAdvance();
-    });
-  }
-
-  /* 接力核心：同步換段＋play()，路徑上沒有計時器與 await。 */
-  function qPlayCurrent() {
-    var q = state.q;
-    if (!q) return;
-    if (state.paused) { q.hold = true; return; }
-    var item = q.items[q.idx];
-    if (!item) { qTeardown(true); return; }
-    q.currentKind = item.kind;
-    if (item.sentenceStart) {
-      state.currentIdx = item.sentenceIdx;
-      showNowPlaying(item.note);
-      updateMediaMetadata(item.note);
-      try {
-        $('playState').textContent = '▶ 播放中：' + (item.note.foreign || item.note.zh || '').slice(0, 24) +
-          (q.ttsCount ? '（' + q.ttsCount + ' 句為瀏覽器語音，鎖屏時自動跳過該句）' : '');
-      } catch (_) {}
-      logPlay({
-        time: new Date().toLocaleTimeString('zh-TW', { hour12: false }),
-        text: (item.note.foreign || item.note.zh || '').slice(0, 18),
-        src: item.kind === 'tts' ? 'browser' : (item.from || 'azure'),
-        ms: '-', outcome: '鎖屏接力'
-      });
-    }
-    if (item.kind === 'tts') { setAudioSource('browser'); qPlayTts(q, item); return; }
-    setAudioSource(item.from || 'azure');
-    var a = getAudioEl();
-    state.currentAudio = a;
-    try { a.onloadedmetadata = null; } catch (_) {}
-    a.onended = function () { if (state.q === q) qAdvance(); };
-    a.onerror = function () { if (state.q === q) qAdvance(); };
-    setGainFromCache(item.key);
-    try { a.src = item.src; } catch (_) {}
-    qArmWatchdog(item);
-    try {
-      var pr = a.play();
-      if (pr && pr.catch) pr.catch(function () { if (state.q === q && !state.paused) qAdvance(); });
-    } catch (_) { qAdvance(); }
-  }
-
-  function startQueue(q) {
-    q.idx = 0; q.epoch = 0; q.hold = false; q.currentKind = null; q.watchdog = null;
-    state.q = q;
-    qPlayCurrent();
-  }
-
   /* ---------- 背景播放：Media Session（鎖屏／系統媒體控制） ---------- */
   /* 2026-10-09：讓連播走系統媒體通道——關屏繼續播，鎖屏顯示句子、可暫停／切上下句。 */
   function setupMediaSession() {
@@ -945,36 +731,33 @@
   }
   /* 鎖屏／媒體鍵的上下句：中斷目前這句，跳到清單中指定位置（僅連播模式）。 */
   function stepSentence(dir) {
-    var q = state.q;
-    if (!q || !q.starts || !q.starts.length) return;
-    var cur = state.currentIdx == null ? 0 : state.currentIdx;
-    var target = cur + dir;
-    if (target < 0) target = 0;
-    if (target >= q.starts.length) target = q.starts.length - 1;
-    q.epoch++;
-    if (q.currentKind === 'tts') { try { speechSynthesis.cancel(); } catch (_) {} }
-    q.idx = q.starts[target];
-    if (state.paused) { state.paused = false; setPausedUI(); setMediaPlaybackState(); }
-    q.hold = false;
-    qPlayCurrent();
+    if (!state.playing || !state.playIds || !state.playIds.length) return;
+    var idx = (state.currentIdx == null ? 0 : state.currentIdx) + dir;
+    if (idx < 0) idx = 0;
+    if (idx >= state.playIds.length) idx = state.playIds.length - 1;
+    state.skipArmed = true;
+    state.skipRequest = idx;
+    /* 立刻叫醒目前的等待（播音／Azure 請求），不等看門狗超時。 */
+    var cancel = state.cancelWait;
+    state.cancelWait = null;
+    try { if (cancel) cancel(); } catch (_) {}
+    try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
+    try { if ('speechSynthesis' in window) speechSynthesis.cancel(); } catch (_) {}
   }
 
-  /* 回到前景時自我修復：若 OS 在背景期間把音檔元素暫停了（來電、系統
-     中斷等），而播放狀態仍是「播放中、未按暫停」，回到前景自動接著播；
-     使用者自己按的暫停（state.paused）不碰。 */
+  /* 回到前景時自我修復（2026-10-17）：若 OS 在背景期間把音檔元素暫停了
+     （來電、系統中斷等），而播放狀態仍是「播放中、未按暫停」，回到前景
+     自動接著播，並重設看門狗；使用者自己按的暫停（state.paused）不碰。 */
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) return;
     try {
       resumeAudioCtx();
       if (!state.playing || state.paused || state.stopFlag) return;
-      var q = state.q;
-      if (!q) return;
-      if (q.hold) { q.hold = false; qPlayCurrent(); return; }
       var a = state.currentAudio;
       if (a && a.paused && a.currentTime > 0 && a.duration && a.currentTime < a.duration) {
         var pr = a.play();
         if (pr && pr.catch) pr.catch(function () {});
-        qArmWatchdog(q.items[q.idx]);
+        if (state.audioCtl) { try { state.audioCtl.resume(); } catch (_) {} }
       }
     } catch (_) {}
   });
@@ -985,34 +768,31 @@
   }
   function togglePause() {
     if (!state.playing) return;
-    var q = state.q;
-    if (!q) return; /* 還在準備音檔：尚未開播，暫停鍵先不作用 */
     if (state.paused) {
-      /* 繼續：接力隊列從目前片段接著走 */
+      /* 繼續：恢復聲音＋重設看門狗 */
       state.paused = false;
-      if (q.hold) { q.hold = false; qPlayCurrent(); }
-      else if (q.currentKind === 'tts') {
+      if (state.currentAudio) {
+        state.currentAudio.play().catch(function () {});
+        if (state.audioCtl) { try { state.audioCtl.resume(); } catch (_) {} }
+      } else {
         try { speechSynthesis.resume(); } catch (_) {}
         if (state.speechCtl) { try { state.speechCtl.resume(); } catch (_) {} }
-      } else if (state.currentAudio) {
-        state.currentAudio.play().catch(function () {});
-        qArmWatchdog(q.items[q.idx]);
       }
     } else {
-      /* 暫停：停住聲音＋凍結看門狗 */
+      /* 暫停：停住聲音＋凍結看門狗（否則幾秒後看門狗會推進到下一句自動播出） */
       state.paused = true;
-      if (q.currentKind === 'tts') {
+      if (state.currentAudio) {
+        try { state.currentAudio.pause(); } catch (_) {}
+        if (state.audioCtl) { try { state.audioCtl.pause(); } catch (_) {} }
+      } else {
         try { speechSynthesis.pause(); } catch (_) {}
         if (state.speechCtl) { try { state.speechCtl.pause(); } catch (_) {} }
-      } else if (state.currentAudio) {
-        try { state.currentAudio.pause(); } catch (_) {}
-        qClearWatchdog();
       }
     }
     setPausedUI();
     setMediaPlaybackState();
   }
-    function beginPlaybackUI() {
+  function beginPlaybackUI() {
     state.paused = false; setPausedUI();
     $('pauseBtn').disabled = false;
     setMediaPlaybackState();
@@ -1206,8 +986,6 @@
   }
 
   /* 每句先播一次中文（Azure 預生成音檔；失敗時降級瀏覽器語音 zh-TW），再播三次外語。 */
-  /* 舊路徑備查：2026-10-18 起單句／連播改走鎖屏接力引擎，
-     playChineseOnce 與 playSentenceInner 已無呼叫端，保留供對照。 */
   async function playChineseOnce(n, token) {
     if (!n.zh || state.stopFlag) return;
     if (token !== undefined && token !== state.playToken) return;
@@ -1224,56 +1002,49 @@
 
   async function playSentence(n, btn) {
     if (state.playing) {
-      /* 播到一半點了別句：直接切換過去；點同一句則切換為停止。 */
+      /* 播到一半點了別句的播放鍵：直接切換過去（先停舊的，等它完全退出再播新的），
+         不讓使用者以為當掉。點同一句則是切換為停止。 */
       var switching = !state.currentNote || state.currentNote._id !== n._id;
       stopPlayback();
       if (!switching) return;
+      var waited = 0;
+      while (state.playing && waited < 2000) { await sleep(50); waited += 50; }
+      if (state.playing) return;  /* 舊循環 2 秒還沒退出，保守起見不啟動新的 */
     }
     state.playing = true; state.stopFlag = false;
-    state.playIds = null; state.currentIdx = 0;
     var token = ++state.playToken;
     beginPlaybackUI();
     if (btn) btn.classList.add('playing');
-    $('playState').textContent = '⏳ 準備音檔中…';
+    $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
-    var built;
     try {
-      built = await buildSentenceItems(n, token);
-    } catch (e) {
-      if (e === LL_STOP || state.stopFlag || token !== state.playToken) return;
+      /* 每句先播一次中文，再播三次外語（Azure）。 */
+      var L = langProfile();
+      await playChineseOnce(n, token);
+      for (var i = 0; i < 3 && !state.stopFlag && token === state.playToken; i++) {
+        await waitIfPaused();
+        await playForeign(n.foreign, L.locale);
+        if (!state.stopFlag && token === state.playToken) await sleep(700);
+      }
+    } finally {
+      state.playing = false;
       if (btn) btn.classList.remove('playing');
-      resetPlayUI();
-      return;
+      $('playState').textContent = '';
+      endPlaybackUI();
     }
-    if (state.stopFlag || token !== state.playToken) {
-      built.runBlobUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
-      if (btn) btn.classList.remove('playing');
-      return;
-    }
-    if (!built.items.length) {
-      if (btn) btn.classList.remove('playing');
-      resetPlayUI();
-      return;
-    }
-    built.items[0].sentenceIdx = 0;
-    startQueue({
-      items: built.items, starts: [0], loop: false, mode: 'single',
-      runBlobUrls: built.runBlobUrls, ttsCount: built.tts, btn: btn || null
-    });
   }
 
   function stopPlayback() {
     state.playToken++;
     state.stopFlag = true;
     state.skipRequest = null; state.skipArmed = false;
-    /* 立刻叫醒準備階段卡住的等待（Azure 請求），不等逾時。 */
+    /* 立刻叫醒目前卡住的等待（播音／Azure 請求），不等看門狗超時。 */
     var cancel = state.cancelWait;
     state.cancelWait = null;
     try { if (cancel) cancel(); } catch (_) {}
+    state.paused = false; setPausedUI();
     try { if (state.currentAudio) state.currentAudio.pause(); } catch (_) {}
     try { speechSynthesis.cancel(); } catch (_) {}
-    state.paused = false; setPausedUI();
-    qTeardown(true);
     setMediaPlaybackState();
   }
 
@@ -1288,38 +1059,37 @@
     var token = ++state.playToken;
     beginPlaybackUI();
     $('playSelectedBtn').textContent = '⏹ 停止';
-    var items = [], starts = [], runBlobUrls = [], ttsCount = 0;
+    var loop = $('loopCheck').checked;
     try {
-      /* 準備階段：螢幕還開著時把全部音檔抓好、轉好，鎖屏後只剩接力。 */
-      for (var i = 0; i < ids.length; i++) {
-        if (state.stopFlag || token !== state.playToken) return;
-        var n = findNote(ids[i]);
-        if (!n) continue;
-        $('playState').textContent = '⏳ 準備音檔中 ' + (i + 1) + ' / ' + ids.length + '（全部抓好，鎖屏才能一路播下去）';
-        var built = await buildSentenceItems(n, token);
-        if (state.stopFlag || token !== state.playToken) {
-          runBlobUrls.concat(built.runBlobUrls).forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
-          return;
+      do {
+        var idx = 0;
+        /* 2026-10-09：while 循環＋skipRequest，讓鎖屏上下句可以中途跳轉。 */
+        while (idx < ids.length && !state.stopFlag && token === state.playToken) {
+          if (state.skipRequest != null) {
+            idx = state.skipRequest;
+            state.skipRequest = null; state.skipArmed = false;
+            if (idx < 0) idx = 0;
+            if (idx >= ids.length) break;
+          }
+          state.currentIdx = idx;
+          var n = findNote(ids[idx]);
+          try {
+            if (n) await playSentenceInner(n, token);
+          } catch (err) {
+            /* 鎖屏跳轉中斷：回到循環頂部處理 skipRequest。 */
+            if (err && err._llSkip) continue;
+            throw err;
+          }
+          idx++;
         }
-        if (!built.items.length) continue;
-        built.items[0].sentenceIdx = starts.length;
-        starts.push(items.length);
-        items = items.concat(built.items);
-        runBlobUrls = runBlobUrls.concat(built.runBlobUrls);
-        ttsCount += built.tts;
-      }
-    } catch (e) {
-      if (e === LL_STOP || state.stopFlag || token !== state.playToken) return;
-      runBlobUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (_) {} });
-      resetPlayUI();
-      alert('準備音檔失敗：' + ((e && e.message) || e));
-      return;
+      } while (loop && !state.stopFlag && token === state.playToken);
+    } finally {
+      state.playing = false;
+      state.playIds = null; state.currentIdx = null; state.skipRequest = null; state.skipArmed = false;
+      $('playSelectedBtn').textContent = '▶ 播放勾選';
+      $('playState').textContent = '';
+      endPlaybackUI();
     }
-    if (!items.length) { resetPlayUI(); return; }
-    startQueue({
-      items: items, starts: starts, loop: $('loopCheck').checked, mode: 'selected',
-      runBlobUrls: runBlobUrls, ttsCount: ttsCount, btn: null
-    });
   }
 
   async function playSentenceInner(n, token) {
