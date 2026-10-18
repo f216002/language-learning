@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261018-03';
+  var LL_APP_VERSION = '20261018-04';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -461,11 +461,26 @@
     });
   }
 
+  /* 診斷：元素被系統暫停時留下紀錄（使用者自己按的暫停不記），
+     鎖屏測試後看紀錄即可分辨是「元素被暫停」還是「接力沒送出」。 */
+  function attachAudioDiag(el) {
+    try {
+      el.addEventListener('pause', function () {
+        if (state.playing && !state.paused && !state.stopFlag) {
+          logPlay({ time: new Date().toLocaleTimeString('zh-TW', { hour12: false }), text: '', src: '-', ms: 0, outcome: '元素被暫停@' + (el.currentTime || 0).toFixed(1) + 's' });
+        }
+      });
+    } catch (_) {}
+  }
+
   /* 共用單一 Audio 元素：iOS Safari 對頻繁 new Audio() 支援不穩，共用最可靠。 */
   var sharedAudioEl = null;
   function getAudioEl() {
     if (!sharedAudioEl) {
-      sharedAudioEl = new Audio();
+      /* 用頁面裡的 <audio id="llAudio">（比照舊站成功模式）：元素在文件裡，
+         iOS 把它當正規媒體播放器；JS 臨時建立的游離元素鎖屏待遇較差。 */
+      sharedAudioEl = document.getElementById('llAudio') || new Audio();
+      attachAudioDiag(sharedAudioEl);
       try { sharedAudioEl.preload = 'auto'; } catch (_) {}
       /* 不接 Web Audio 音量圖（2026-10-18 移除）：10/9 實機驗證可用的版本
          沒有這張圖；10/14 加入音量平衡後，鎖屏／螢幕保護時 AudioContext
@@ -577,7 +592,7 @@
   function logPlay(entry) {
     try {
       state.playLog.push(entry);
-      if (state.playLog.length > 20) state.playLog.shift();
+      if (state.playLog.length > 40) state.playLog.shift();
       renderPlayDiag();
     } catch (_) {}
   }
@@ -590,7 +605,7 @@
     }).join('\n');
   }
 
-  async function playUrl(url, key) {
+  async function playUrl(url, key, opts) {
     /* 2026-10-18：音量圖已移除，不再做響度增益（key 僅供呼叫端相容）。
        直接走 <audio> 原生通道，與 10/9 驗證可用的版本相同。 */
     return new Promise(function (resolve) {
@@ -616,6 +631,9 @@
       var a = getAudioEl();
       try { a.pause(); } catch (_) {}
       state.currentAudio = a;
+      if (!(opts && opts.silence)) {
+        logPlay({ time: new Date().toLocaleTimeString('zh-TW', { hour12: false }), text: noteText.slice(0, 18), src: state.lastAudioFrom || state.audioSource || '?', ms: 0, outcome: '▶開始' });
+      }
       var done = false, timer = null, playErr = convErr;
       function finish(outcome) {
         if (done) return; done = true;
@@ -623,7 +641,7 @@
         if (state.currentAudio === a) state.currentAudio = null;
         if (state.audioCtl) state.audioCtl = null;
         if (objectUrl) { try { URL.revokeObjectURL(objectUrl); } catch (_) {} }
-        logPlay({
+        if (!(opts && opts.silence)) logPlay({
           time: new Date().toLocaleTimeString('zh-TW', { hour12: false }),
           text: noteText.slice(0, 18),
           src: state.lastAudioFrom || state.audioSource || '?',
@@ -751,6 +769,9 @@
      （來電、系統中斷等），而播放狀態仍是「播放中、未按暫停」，回到前景
      自動接著播，並重設看門狗；使用者自己按的暫停（state.paused）不碰。 */
   document.addEventListener('visibilitychange', function () {
+    if (state.playing) {
+      try { logPlay({ time: new Date().toLocaleTimeString('zh-TW', { hour12: false }), text: '', src: '-', ms: 0, outcome: document.hidden ? '頁面隱藏' : '頁面可見' }); } catch (_) {}
+    }
     if (document.hidden) return;
     try {
       resumeAudioCtx();
@@ -898,7 +919,7 @@
     el.className = 'np-source ' + (kind === 'browser' ? 'np-source-browser' : 'np-source-azure');
   }
 
-  async function azureForeign(text, locale) {
+  async function azureForeign(text, locale, opts) {
     var key = audioCacheKey(locale, text);
     if (state.audioCache.has(key)) { state.lastAudioFrom = 'idbcache'; return state.audioCache.get(key); }
     var local = await idbGet(key);
@@ -906,16 +927,20 @@
     if (!state.synthFn) {
       state.synthFn = window.firebase.app().functions('us-east1').httpsCallable('synthesizeV4Source', { timeout: 60000 });
     }
-    /* 保底 70 秒＋可被 stopPlayback 立刻叫醒：雲端函式無回應時也不凍結播放流程。 */
+    /* 保底 70 秒＋可被 stopPlayback 立刻叫醒：雲端函式無回應時也不凍結播放流程。
+       預抓呼叫（opts.noCancel）不占用 state.cancelWait，避免蓋掉正在播
+       那一段的取消權；結束時也只清掉自己設的那一個。 */
+    var myCancel = null;
     var res = await new Promise(function (resolve, reject) {
       var timer = setTimeout(function () { reject(new Error('Azure 請求逾時（70秒無回應）')); }, 70000);
-      state.cancelWait = function () { clearTimeout(timer); reject(new Error('已停止')); };
+      myCancel = function () { clearTimeout(timer); reject(new Error('已停止')); };
+      if (!(opts && opts.noCancel)) state.cancelWait = myCancel;
       state.synthFn({ locale: locale, text: text }).then(
         function (r) { clearTimeout(timer); resolve(r); },
         function (e) { clearTimeout(timer); reject(e); }
       );
     });
-    state.cancelWait = null;
+    if (state.cancelWait === myCancel) state.cancelWait = null;
     var data = (res && res.data) || {};
     if (!data.audioBase64) throw new Error('empty audio');
     var url = 'data:' + (data.contentType || 'audio/mpeg') + ';base64,' + data.audioBase64;
@@ -1020,6 +1045,24 @@
     }
   }
 
+  /* 預抓（2026-10-18）：趁目前這句還在播，先把本句外語段（單句／連播共用）
+     與下一句（連播）的音檔抓好放進快取；輪到時本機直接播，段落間不再等
+     網路——鎖屏時網路會被凍結，接力就斷在等待裡。只往前抓一句，不是整批。 */
+  function prefetchForeignOf(n) {
+    try {
+      if (!n || !n.foreign) return;
+      var L = langProfile();
+      if (L.cloudVoice) azureForeign(n.foreign, L.locale, { noCancel: true }).catch(function () {});
+    } catch (_) {}
+  }
+  function prefetchNote(n) {
+    try {
+      if (!n) return;
+      if (n.zh) azureForeign(n.zh, 'zh-TW', { noCancel: true }).catch(function () {});
+      prefetchForeignOf(n);
+    } catch (_) {}
+  }
+
   async function playForeign(text, locale) {
     var L = langProfile();
     var tooLong = !llIsAdmin() && Array.from(text || '').length > LL_MAX_AZURE_CHARS;
@@ -1083,6 +1126,30 @@
   }
 
   /* 每句先播一次中文（Azure 預生成音檔；失敗時降級瀏覽器語音 zh-TW），再播三次外語。 */
+  /* 句間空檔改播「靜音片段」（2026-10-18）：不用 setTimeout 空等——
+     鎖屏時計時器被凍結、無聲空檔又讓系統判定閒置；改播 0.6 秒靜音 WAV，
+     聲音不中斷、接力不依賴計時器。WAV 在本機產生（24kHz 單聲道、零取樣）。 */
+  var _silenceUrl = null;
+  function silenceDataUrl() {
+    if (_silenceUrl) return _silenceUrl;
+    var rate = 24000, frames = Math.round(rate * 0.6);
+    var bytes = new Uint8Array(44 + frames * 2);
+    var v = new DataView(bytes.buffer);
+    function wstr(off, s) { for (var i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); }
+    wstr(0, 'RIFF'); v.setUint32(4, 36 + frames * 2, true); wstr(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    wstr(36, 'data'); v.setUint32(40, frames * 2, true);
+    var bin = '';
+    for (var i = 0; i < bytes.length; i += 8192) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+    }
+    _silenceUrl = 'data:audio/wav;base64,' + btoa(bin);
+    return _silenceUrl;
+  }
+  async function playGap() { await playUrl(silenceDataUrl(), '__silence__', { silence: true }); }
+
   async function playChineseOnce(n, token) {
     if (!n.zh || state.stopFlag) return;
     if (token !== undefined && token !== state.playToken) return;
@@ -1094,7 +1161,7 @@
       setAudioSource('browser');
       await speakBrowser(n.zh, 'zh-TW', 0.9);
     }
-    if (!state.stopFlag && (token === undefined || token === state.playToken)) await sleep(500);
+    if (!state.stopFlag && (token === undefined || token === state.playToken)) await playGap();
   }
 
   async function playSentence(n, btn) {
@@ -1117,11 +1184,12 @@
     try {
       /* 每句先播一次中文，再播三次外語（Azure）。 */
       var L = langProfile();
+      prefetchForeignOf(n);
       await playChineseOnce(n, token);
       for (var i = 0; i < 3 && !state.stopFlag && token === state.playToken; i++) {
         await waitIfPaused();
         await playForeign(n.foreign, L.locale);
-        if (!state.stopFlag && token === state.playToken) await sleep(700);
+        if (!state.stopFlag && token === state.playToken) await playGap();
       }
     } finally {
       state.playing = false;
@@ -1170,6 +1238,7 @@
           }
           state.currentIdx = idx;
           var n = findNote(ids[idx]);
+          prefetchNote(idx + 1 < ids.length ? findNote(ids[idx + 1]) : null);
           try {
             if (n) await playSentenceInner(n, token);
           } catch (err) {
@@ -1193,13 +1262,14 @@
     $('playState').textContent = '▶ 播放中：' + (n.foreign || n.zh || '').slice(0, 24);
     showNowPlaying(n);
     updateMediaMetadata(n);
+    prefetchForeignOf(n);
     /* 每句先播一次中文，再播三次外語。 */
     var L = langProfile();
     await playChineseOnce(n, token);
     for (var i = 0; i < 3 && !state.stopFlag && (token === undefined || token === state.playToken); i++) {
       await waitIfPaused();
       await playForeign(n.foreign, L.locale);
-      if (!state.stopFlag && (token === undefined || token === state.playToken)) await sleep(700);
+      if (!state.stopFlag && (token === undefined || token === state.playToken)) await playGap();
     }
   }
 
