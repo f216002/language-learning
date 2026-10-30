@@ -1585,7 +1585,12 @@
     });
     $('topicSelectAll').addEventListener('change', function (e) { toggleSelectAllTopics(e.target.checked); });
     $('topicSaveBtn').addEventListener('click', saveTopicRename);
-    $('searchInput').addEventListener('input', renderNotes);
+    /* 搜尋框輸入防抖（20261030）：停手 250ms 後才重渲染，減少連續輸入時的卡頓。 */
+    var searchDebounceTimer = null;
+    $('searchInput').addEventListener('input', function () {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(function () { searchDebounceTimer = null; renderNotes(); }, 250);
+    });
     $('playSelectedBtn').addEventListener('click', function () { warmUpAudio(); playSelected(); });
     $('pauseBtn').addEventListener('click', togglePause);
     setupMediaSession();
