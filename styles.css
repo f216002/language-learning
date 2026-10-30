@@ -96,3 +96,6 @@ dialog label input{margin-top:4px}
 .id-badge{display:inline-block;background:#e0e7ff;color:#3730a3;font-size:.75rem;font-weight:700;padding:2px 8px;border-radius:6px;margin-right:6px;font-family:monospace}
 /* ---- V4 式提示辭三鍵 ---- */
 button.dark{background:#111827;border-color:#111827;color:#fff;font-weight:700}
+
+/* 20261030 效能修復：卡片跳過畫面外排版繪製（結構、勾選語義皆不動）。 */
+.note-card{content-visibility:auto;contain-intrinsic-size:auto 120px}
