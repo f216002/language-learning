@@ -37,6 +37,8 @@ textarea{resize:vertical}
 button{border:1px solid var(--line);background:#f8fafc;border-radius:10px;padding:9px 14px;font-size:.95rem;cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
 button:disabled{opacity:.5;cursor:default}
+/* 全站按壓回饋（2026-11-11）：任何按鈕按下去都下沉 2px＋略縮＋略暗，停用鈕除外 */
+button:active:not(:disabled),a.btn-link:active{transform:translateY(2px) scale(.98);filter:brightness(.92)}
 a.btn-link{display:inline-block;text-decoration:none;padding:10px 18px}
 .check{display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer}
 .check input{width:20px;height:20px;accent-color:var(--accent);flex-shrink:0}
