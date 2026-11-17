@@ -99,6 +99,8 @@ dialog label input{margin-top:4px}
 .select-all-row input{width:20px;height:20px;accent-color:var(--accent)}
 /* ---- 播放中顯示＋高亮（對齊舊站：置中大字版） ---- */
 .now-playing{display:block;text-align:center;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;border-radius:16px;padding:18px 14px;margin-top:10px}
+/* 播放列 hidden 時必須真的隱藏：上方 display:block 會蓋掉瀏覽器預設的 [hidden] 隱藏（2026-11-17 修復空白藍塊） */
+.now-playing[hidden]{display:none}
 .np-foreign{font-size:1.5rem;font-weight:700;line-height:1.6}
 .np-roman{font-size:1.05rem;opacity:.92;font-style:italic;margin-top:8px}
 .np-zh{font-size:1.05rem;background:rgba(255,255,255,.15);border-radius:10px;padding:8px 14px;margin-top:10px;display:inline-block}
