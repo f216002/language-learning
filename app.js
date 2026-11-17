@@ -6,7 +6,7 @@
   'use strict';
 
   /* 版本號：每次改 app.js 就 bump，並同步 index.html 的 ?v=。設定頁會顯示它。 */
-  var LL_APP_VERSION = '20261018-04';
+  var LL_APP_VERSION = '20261117-01';
 
   function $(id) { return document.getElementById(id); }
   function esc(s) {
@@ -22,7 +22,7 @@
   }
 
   var state = {
-    user: null, uid: null, lang: 'hi',
+    user: null, uid: null, lang: 'hi', myLangs: [],
     notes: [], inbox: [], topics: [],
     playQueue: [], playing: false, stopFlag: false, paused: false,
     currentAudio: null, currentNote: null, playToken: 0, cancelWait: null,
@@ -75,6 +75,11 @@
         await profileRef().set({ currentLang: 'hi', updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() });
         state.lang = 'hi';
       }
+      /* 我的語言：正在學的語言清單（快速切換列用）；舊帳號沒有此欄位時預設只有目前語言。 */
+      var savedLangs = snap.exists && Array.isArray(snap.data().myLangs) ? snap.data().myLangs : null;
+      state.myLangs = (savedLangs || [state.lang]).filter(function (c) { return !!LL_LANGS[c]; });
+      if (state.myLangs.indexOf(state.lang) < 0) state.myLangs.unshift(state.lang);
+      if (!savedLangs) { try { await profileRef().set({ myLangs: state.myLangs }, { merge: true }); } catch (e) { /* 忽略 */ } }
     } catch (err) { console.error('profile load failed', err); }
     renderLangUI();
     await Promise.all([loadNotes(), loadInbox()]);
@@ -289,6 +294,26 @@
     });
   }
 
+  /* 新語言引導：把該語言的 3 句範例句一鍵加入句子庫（已在庫的跳過，不重複）。 */
+  async function addExampleSentences(btn) {
+    var L = langProfile();
+    var examples = (L.examples || []).filter(function (ex) {
+      return ex.foreign && !state.notes.some(function (n) { return n.foreign === ex.foreign; });
+    });
+    if (!examples.length) { if (btn) btn.textContent = '範例句都已在庫中'; return; }
+    if (btn) { btn.disabled = true; btn.textContent = '加入中…'; }
+    try {
+      var col = langCol('notes');
+      var batch = db().batch();
+      var ts = window.firebase.firestore.FieldValue.serverTimestamp();
+      examples.forEach(function (ex) {
+        batch.set(col.doc(), { zh: ex.zh, foreign: ex.foreign, roman: ex.roman || '', topicId: '0', topicName: '範例句', source: 'example', createdAt: ts, updatedAt: ts });
+      });
+      await batch.commit();
+      await loadNotes();
+    } catch (err) { alert('加入失敗：' + (err.message || err)); if (btn) { btn.disabled = false; btn.textContent = '一鍵加入這 3 句範例句'; } }
+  }
+
   function renderNotes() {
     var list = filteredNotes();
     var div = $('noteList');
@@ -296,7 +321,28 @@
     $('noteCount').textContent = '共 ' + state.notes.length + ' 句' + (list.length !== state.notes.length ? '／顯示 ' + list.length + ' 句' : '');
     if (!list.length) {
       var emptyMsg;
-      if (!state.notes.length) emptyMsg = '還沒有句子。去「學新句」用 AI 整理第一批，或到「設定」匯入舊站資料。';
+      if (!state.notes.length) {
+        /* 空句庫＋該語言有範例句：顯示引導（範例＋一鍵加入＋去學新句），不是一片空白。 */
+        var L = langProfile();
+        var exs = L.examples || [];
+        if (exs.length) {
+          var html = '<div class="empty">這個語言的句子庫還是空的，先從下面 3 句範例句開始，聽聽聲音、熟悉一下：</div>';
+          exs.forEach(function (ex, i) {
+            html += '<div class="example-item"><div class="example-num">範例 ' + (i + 1) + '</div>' +
+              '<div class="note-foreign">' + esc(ex.foreign) + '</div>' +
+              (ex.roman ? '<div class="note-roman">' + esc(ex.roman) + '</div>' : '') +
+              '<div class="note-zh">' + esc(ex.zh) + '</div></div>';
+          });
+          html += '<div class="row wrap"><button id="addExamplesBtn" type="button" class="primary">＋ 一鍵加入這 ' + exs.length + ' 句範例句</button>' +
+            '<button id="gotoLearnBtn" type="button">✨ 去「學新句」加自己的句子</button></div>';
+          div.innerHTML = html;
+          $('addExamplesBtn').addEventListener('click', function (e) { addExampleSentences(e.currentTarget); });
+          $('gotoLearnBtn').addEventListener('click', function () { switchTab('learn'); });
+          updateSelectCount();
+          return;
+        }
+        emptyMsg = '還沒有句子。去「學新句」用 AI 整理第一批，或到「設定」匯入舊站資料。';
+      }
       else if (!selectedTopicKeys.length) emptyMsg = '請先從上方選擇主題（可複選，或勾選「全選」）。';
       else emptyMsg = '沒有符合的句子，請調整主題選擇或搜尋關鍵字。';
       div.innerHTML = '<div class="empty">' + emptyMsg + '</div>';
@@ -1436,6 +1482,53 @@
     }
   });
 
+  /* ---------- 我的語言（快速切換列＋設定頁勾選） ---------- */
+  async function saveMyLangs() {
+    try {
+      await profileRef().set({ myLangs: state.myLangs, updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    } catch (err) { console.error(err); }
+  }
+  function renderMyLangChips() {
+    var box = $('myLangChips');
+    if (!box) return;
+    box.innerHTML = '';
+    state.myLangs.forEach(function (code) {
+      var p = LL_LANGS[code];
+      if (!p) return;
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip' + (code === state.lang ? ' active' : '');
+      b.textContent = p.nameZh + ' · ' + p.name;
+      b.setAttribute('aria-pressed', code === state.lang ? 'true' : 'false');
+      b.addEventListener('click', function () { setLang(code); });
+      box.appendChild(b);
+    });
+  }
+  function renderMyLangChecks() {
+    var box = $('myLangChecks');
+    if (!box) return;
+    box.innerHTML = '';
+    Object.keys(LL_LANGS).forEach(function (code) {
+      var p = LL_LANGS[code];
+      var lab = document.createElement('label');
+      lab.className = 'lang-check';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = state.myLangs.indexOf(code) >= 0;
+      cb.disabled = code === state.lang; /* 目前學習的語言不能取消勾選 */
+      cb.addEventListener('change', function () {
+        var i = state.myLangs.indexOf(code);
+        if (cb.checked && i < 0) state.myLangs.push(code);
+        if (!cb.checked && i >= 0) state.myLangs.splice(i, 1);
+        saveMyLangs();
+        renderMyLangChips();
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(' ' + p.nameZh + ' · ' + p.name));
+      box.appendChild(lab);
+    });
+  }
+
   /* ---------- 設定 ---------- */
   function renderLangUI() {
     var L = langProfile();
@@ -1449,12 +1542,15 @@
         var p = LL_LANGS[code];
         var o = document.createElement('option');
         o.value = code;
-        o.textContent = p.nameZh + ' · ' + p.name;
+        /* 頁首選單窄，只顯示中文名（印地文／泰文）；設定頁保留全名。 */
+        o.textContent = (id === 'langSelectTop') ? p.nameZh : (p.nameZh + ' · ' + p.name);
         if (code === state.lang) o.selected = true;
         sel.appendChild(o);
       });
     });
     $('libraryTitle').textContent = L.nameZh + '句子庫';
+    renderMyLangChips();
+    renderMyLangChecks();
     /* 各欄位跟著語言變：學新句輸入框的舉例提示 */
     var ideaInput = $('ideaInput');
     if (ideaInput) ideaInput.placeholder = '例如：我明天早上要去市場買菜，怎麼用' + L.nameZh + '說？';
@@ -1464,6 +1560,8 @@
     if (!LL_LANGS[code] || code === state.lang) return;
     state.lang = code;
     prevTopicKeys = []; selectedTopicKeys = [];
+    /* 切到新語言＝開始學它，自動加入我的語言。 */
+    if (state.myLangs.indexOf(code) < 0) { state.myLangs.push(code); saveMyLangs(); }
     try {
       await profileRef().set({ currentLang: code, updatedAt: window.firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
     } catch (err) { console.error(err); }
