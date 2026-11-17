@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="語言學習">
 <meta name="theme-color" content="#1e3a8a">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="styles.css?v=20261111-01">
+<link rel="stylesheet" href="styles.css?v=20261117-01">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -58,6 +58,7 @@
       <div class="row between">
         <h2 id="libraryTitle">句子庫</h2>
       </div>
+      <div id="myLangChips" class="mylang-chips" aria-label="我的語言"></div>
       <div class="row wrap">
         <div class="topic-dropdown" id="topicDropdown">
           <button type="button" id="topicDropdownBtn" aria-label="主題篩選"><span id="topicBtnText">全部主題</span><span aria-hidden="true"> ▾</span></button>
@@ -146,6 +147,8 @@
       <label>切換學習語言：
         <select id="langSelect"></select>
       </label>
+      <p class="muted">我的語言（勾選的會顯示在句子庫上方的快速切換列；目前學的不能取消）：</p>
+      <div id="myLangChecks" class="lang-checks"></div>
       <div class="row wrap">
         <button id="testVoiceBtn" type="button">🔊 試播語音</button>
       </div>
@@ -201,6 +204,6 @@
 </dialog>
 
 <audio id="llAudio" preload="auto" style="display:none"></audio>
-<script src="app.js?v=20261030-01"></script>
+<script src="app.js?v=20261117-01"></script>
 </body>
 </html>
